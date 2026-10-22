@@ -32,7 +32,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.core import Context, Event, HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_state_change_event
@@ -55,6 +55,7 @@ from .history_logic import (
     classify_reason,
     session_liters,
     should_discard,
+    source_from_context,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -65,6 +66,10 @@ _BAD_STATES = ("unknown", "unavailable", "none", "")
 #: confirmed the start (lost Zigbee report, device offline). Without a TTL it
 #: would linger and mislabel a much later manual run as integration-driven.
 _PENDING_TTL_S = 120.0
+
+#: A "this session is plan #n" report (0x501F) that arrives before the switch
+#: turns on waits this long for the run to open.
+_SESSION_TAG_TTL_S = 60.0
 
 
 def _empty_channel() -> dict:
@@ -89,6 +94,8 @@ class SwvRunLog:
         # switch -> ISO of the REAL off-transition, captured when the grace
         # starts so the deferred finalize records the true close time.
         self._off_at: dict[str, str] = {}
+        # switch -> scheduled-session tag that arrived before the run opened.
+        self._session_tags: dict[str, dict] = {}
 
     # ── lifecycle ──
     async def async_setup(self) -> None:
@@ -165,14 +172,14 @@ class SwvRunLog:
                 if channel["in_flight"].pop("off_at", None) is not None:
                     self._save()
             else:
-                self._open_run(switch)
+                self._open_run(switch, new.context)
         elif state == "off":
             if has_inflight:
                 self._schedule_finalize(switch)
         # 'unavailable' / 'unknown': ignore — a Zigbee drop must not end a run.
 
     @callback
-    def _open_run(self, switch: str) -> None:
+    def _open_run(self, switch: str, context: Context | None = None) -> None:
         channel = self._data["channels"].setdefault(switch, _empty_channel())
         if channel.get("in_flight"):
             return
@@ -185,14 +192,20 @@ class SwvRunLog:
             _LOGGER.debug("Ignoring stale pending attribution on %s", switch)
             pending = {}
         mode, target = self._snapshot_config(info)
+        source = pending.get("source") or source_from_context(
+            getattr(context, "user_id", None), getattr(context, "parent_id", None)
+        )
         channel["in_flight"] = {
             "start": dt_util.utcnow().isoformat(),
-            "source": pending.get("source", "manual"),
+            "source": source,
             "mode": mode,
             "target": target,
             "channel": info.get("channel"),
             "ambiguous": False,
         }
+        tag = self._session_tags.pop(switch, None)
+        if tag and dt_util.utcnow().timestamp() - tag["ts"] <= _SESSION_TAG_TTL_S:
+            self._apply_session_tag(channel["in_flight"], tag)
         # The session feed is global: if the sibling channel is already
         # running, neither run's liters can be attributed. Poison both.
         for other_switch, other in self._data["channels"].items():
@@ -212,6 +225,71 @@ class SwvRunLog:
             target,
         )
         self._save()
+
+    @callback
+    def tag_session(
+        self,
+        device_id: str,
+        channel: str,
+        plan_index: int,
+        mode: str | None,
+        target: float | None,
+    ) -> None:
+        """Mark the device's current run as on-valve plan ``plan_index``.
+
+        Called by the schedule manager for each 0x501F report that says the
+        session was started by a plan (reported every few seconds while the
+        valve runs). The line's in-flight run is re-tagged ``scheduled``, and
+        its mode/target come from the plan rather than the manual default
+        config the observer snapshotted. If the report is ahead of the switch
+        state, the tag waits for the run to open. If the line has no run but
+        exactly one line of the device does, that one is tagged: on some
+        firmware both lines may report on endpoint 1.
+        """
+        tag = {
+            "plan_index": plan_index,
+            "mode": mode,
+            "target": target,
+            "ts": dt_util.utcnow().timestamp(),
+        }
+        device_switches = [
+            switch
+            for switch, info in self._switch_info.items()
+            if info.get("device_id") == device_id
+        ]
+        running = [
+            switch
+            for switch in device_switches
+            if self._data["channels"].get(switch, {}).get("in_flight")
+        ]
+        target_switch = next(
+            (
+                s
+                for s in device_switches
+                if self._switch_info[s].get("channel") == channel
+            ),
+            None,
+        )
+        if target_switch not in running and len(running) == 1:
+            target_switch = running[0]
+        if target_switch is None:
+            return
+        inf = self._data["channels"].get(target_switch, {}).get("in_flight")
+        if not inf:
+            self._session_tags[target_switch] = tag
+            return
+        if inf.get("source") == "scheduled" and inf.get("plan_index") == plan_index:
+            return
+        self._apply_session_tag(inf, tag)
+        self._save()
+
+    @staticmethod
+    def _apply_session_tag(inf: dict, tag: dict) -> None:
+        inf["source"] = "scheduled"
+        inf["plan_index"] = tag["plan_index"]
+        if tag.get("mode") is not None:
+            inf["mode"] = tag["mode"]
+            inf["target"] = tag["target"]
 
     @callback
     def _snapshot_config(self, info: dict) -> tuple[str | None, float | None]:
@@ -324,6 +402,7 @@ class SwvRunLog:
             source=source,
             reason=reason,
             channel=inf.get("channel") or "?",
+            plan_index=inf.get("plan_index"),
         )
         runs = channel.setdefault("runs", [])
         runs.insert(0, record)

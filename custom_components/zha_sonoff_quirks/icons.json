@@ -1,6 +1,12 @@
 {
   "services": {
     "irrigation_by_liters": { "service": "mdi:bucket-outline" },
-    "irrigation_by_minutes": { "service": "mdi:clock-outline" }
+    "irrigation_by_minutes": { "service": "mdi:clock-outline" },
+    "set_irrigation_plan": { "service": "mdi:calendar-clock" },
+    "remove_irrigation_plan": { "service": "mdi:calendar-remove" },
+    "rain_delay": { "service": "mdi:weather-pouring" },
+    "resync_plans": { "service": "mdi:calendar-sync" },
+    "set_program": { "service": "mdi:format-list-numbered" },
+    "clear_program": { "service": "mdi:playlist-remove" }
   }
 }

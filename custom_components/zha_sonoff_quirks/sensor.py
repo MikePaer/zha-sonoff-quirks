@@ -24,7 +24,7 @@ regardless of how the switch entity_id is spelled.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -38,12 +38,15 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_track_point_in_utc_time
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN, RUNS_ATTR_CAP, history_signal
 from .entity import SwvAttachedEntity
-from .helpers import find_swv_switches
+from .helpers import all_devices, find_swv_switches
 from .history import SwvRunLog
+from .schedule_logic import describe_plan, next_run, plan_from_dict
+from .schedules import SwvScheduleManager, schedule_signal
 
 
 async def async_setup_entry(
@@ -78,6 +81,13 @@ async def async_setup_entry(
             new_entities.append(
                 SwvWaterTotalSensor(device, switch, info["channel"], run_log)
             )
+            schedules: SwvScheduleManager | None = hass.data.get(DOMAIN, {}).get(
+                "schedules"
+            )
+            if schedules is not None:
+                new_entities.append(
+                    SwvScheduleSensor(device, switch, info["channel"], schedules)
+                )
         if new_entities:
             async_add_entities(new_entities)
 
@@ -92,7 +102,7 @@ async def async_setup_entry(
         """
         await asyncio.sleep(10)
         ent_reg = er.async_get(hass)
-        for device in list(dev_reg.devices.values()):
+        for device in all_devices(dev_reg):
             if entry.entry_id not in device.config_entries:
                 continue
             if len(device.config_entries) > 1:
@@ -212,3 +222,100 @@ class SwvWaterTotalSensor(_SwvHistoryEntity):
     def native_value(self) -> float:
         """Cumulative recorded liters for this channel."""
         return round(self._run_log.water_total(self._switch_entity), 2)
+
+
+class SwvScheduleSensor(SwvAttachedEntity, SensorEntity):
+    """Next on-valve plan start for a line; the plan list rides along.
+
+    State: when the valve should next open this line by itself, computed from
+    HA's desired plans (there is no way to read the plans back from the
+    valve). Attributes: every slot with its status (pending / on_valve /
+    failed), the rain delay HA last set, and when the valve last asked for
+    the time — the clock the plans fire on.
+    """
+
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    def __init__(
+        self,
+        device: dr.DeviceEntry,
+        switch_entity: str,
+        channel: str,
+        schedules: SwvScheduleManager,
+    ) -> None:
+        """Set the channel-prefixed unique_id and display name."""
+        super().__init__(device, switch_entity, channel)
+        self._schedules = schedules
+        self._device_id = device.id
+        self._attr_unique_id = f"{DOMAIN}_schedule_ch{channel}_{switch_entity}"
+        self._attr_name = f"Next scheduled run CH{channel}"
+        self._unsub_timer = None
+
+    async def async_added_to_hass(self) -> None:
+        """Attach to the ZHA device and follow the device's plan changes."""
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass, schedule_signal(self._device_id), self._handle_update
+            )
+        )
+        self.async_on_remove(self._cancel_timer)
+        self._handle_update()
+
+    @callback
+    def _cancel_timer(self) -> None:
+        if self._unsub_timer is not None:
+            self._unsub_timer()
+            self._unsub_timer = None
+
+    @callback
+    def _handle_update(self, _now: datetime | None = None) -> None:
+        self._cancel_timer()
+        nxt = self._next()
+        if nxt is not None:
+            # Recompute just after the start passes, to roll to the next one.
+            self._unsub_timer = async_track_point_in_utc_time(
+                self.hass, self._handle_update, nxt[0] + timedelta(seconds=1)
+            )
+        self.async_write_ha_state()
+
+    def _next(self):
+        return next_run(
+            self._schedules.desired_plans(self._device_id, self._channel),
+            dt_util.now(),
+            dt_util.get_default_time_zone(),
+            self._schedules.rain_delay_until(self._device_id),
+        )
+
+    @property
+    def native_value(self) -> datetime | None:
+        """Start of the next enabled plan on this line."""
+        nxt = self._next()
+        return nxt[0] if nxt else None
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Slots with status, next plan index, rain delay, last clock sync."""
+        plans = []
+        for index, slot in sorted(
+            self._schedules.slots(self._device_id, self._channel).items()
+        ):
+            entry = (
+                describe_plan(plan_from_dict(slot["plan"]))
+                if slot.get("plan")
+                else {"index": index, "removing": True}
+            )
+            entry["status"] = slot.get("status")
+            if slot.get("error"):
+                entry["error"] = slot["error"]
+            plans.append(entry)
+        nxt = self._next()
+        rain = self._schedules.rain_delay_until(self._device_id)
+        sync = self._schedules.last_time_sync(self._device_id) or {}
+        return {
+            "plans": plans,
+            "next_plan_index": nxt[1].index if nxt else None,
+            "rain_delay_until": rain.isoformat() if rain else None,
+            "last_time_sync": sync.get("at"),
+            "time_sync_count": sync.get("count", 0),
+        }

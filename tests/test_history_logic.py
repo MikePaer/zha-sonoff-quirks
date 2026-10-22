@@ -20,6 +20,7 @@ build_record = _module.build_record
 classify_reason = _module.classify_reason
 session_liters = _module.session_liters
 should_discard = _module.should_discard
+source_from_context = _module.source_from_context
 
 
 # ── classify_reason ──
@@ -150,3 +151,46 @@ def test_record_keeps_none_liters():
     )
     assert record["liters"] is None
     assert record["start"] is None
+
+
+# ── run source (fork hydro-duo) ──
+def test_record_carries_plan_index_only_for_scheduled_runs():
+    record = build_record(
+        start_iso=None,
+        end_iso="2026-10-23T12:11:04+00:00",
+        duration_s=660,
+        liters=None,
+        mode="duration",
+        target=11.0,
+        source="scheduled",
+        reason="completed",
+        channel="1",
+        plan_index=0,
+    )
+    assert record["source"] == "scheduled"
+    assert record["plan_index"] == 0
+
+
+@pytest.mark.parametrize(
+    ("user_id", "parent_id", "expected"),
+    [
+        ("abc", None, "manual"),  # UI / script via API
+        (None, "def", "manual"),  # automation
+        (None, None, "physical"),  # the valve reported it on its own
+    ],
+)
+def test_source_from_context(user_id, parent_id, expected):
+    assert source_from_context(user_id, parent_id) == expected
+
+
+@pytest.mark.parametrize(
+    ("source", "discarded"),
+    [
+        ("manual", True),
+        ("physical", True),
+        ("integration", False),
+        ("scheduled", False),
+    ],
+)
+def test_only_manual_or_physical_flaps_are_discarded(source, discarded):
+    assert should_discard(source, 1.0, 3, False) is discarded
