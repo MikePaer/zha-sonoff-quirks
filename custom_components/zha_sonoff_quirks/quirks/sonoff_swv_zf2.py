@@ -34,8 +34,34 @@ Formato wire 0x501D (12 byte uint8 array, campi big-endian):
   [7]     capacity_unit     0=US gallon 1=litro
   [8..9]  capacity_amount   uint16, 0-10000
   [10..11] fail_safe        uint16, minuti, 0-719
+
+Programmi on-device (fork hydro-duo, 2026-10)
+---------------------------------------------
+Fino a 6 programmi per linea, salvati e eseguiti dalla valvola anche con HA
+spento. Comandi cluster 0xFC11, linea A sull'endpoint 1 e linea B
+sull'endpoint 2 (come Sonoff e Zigbee2MQTT):
+
+  0x06 set plan   (28 byte, vedi encode_irrigation_plan) -> risposta 0x06 status
+  0x07 remove     (1 byte: indice 0-5)                    -> report 0x0A indice
+  0x08 rain delay (uint32 BE, secondi locali dal 2000; 0 = annulla)
+  0x09 report di un programma (stessi 28 byte del set)
+
+Il layout e' quello di Zigbee2MQTT (zigbee-herdsman-converters sonoff.ts),
+verificato byte per byte in tests/test_schedules_z2m_vectors.py. Lo script
+ZHA ufficiale Sonoff concorda sul layout ma non su due valori: unita' (Sonoff
+0=litro, Z2M e questo quirk 1=litro) e create_datetime (Sonoff epoca 2000,
+Z2M secondi Unix). Qui si segue Z2M.
+
+I programmi scattano sull'orologio LOCALE della valvola, che lo chiede con una
+Read Attributes sul cluster Time (0x000A). La signature non ha il cluster
+Time in uscita e zigpy scartava la richiesta: SWVZF2TimeCluster la aggiunge e
+risponde come Z2M (swvznGenTimeCompatResponse).
 """
 
+from collections.abc import Callable
+from dataclasses import dataclass, replace
+from datetime import UTC, date, datetime, timedelta, tzinfo
+import logging
 from typing import Any, Final
 
 from zigpy.quirks import CustomCluster
@@ -49,10 +75,13 @@ from zigpy.quirks.v2.homeassistant import EntityType, UnitOfTime, UnitOfVolume
 from zigpy.quirks.v2.homeassistant.binary_sensor import BinarySensorDeviceClass
 from zigpy.quirks.v2.homeassistant.number import NumberDeviceClass
 import zigpy.types as t
-from zigpy.zcl import foundation
-from zigpy.zcl.foundation import BaseAttributeDefs, ZCLAttributeDef
+from zigpy.zcl import ClusterType, foundation
+from zigpy.zcl.clusters.general import Time
+from zigpy.zcl.foundation import BaseAttributeDefs, BaseCommandDefs, ZCLAttributeDef
 
 from zhaquirks import LocalDataCluster
+
+_LOGGER = logging.getLogger(__name__)
 
 MANUAL_SETTINGS_LEN: Final = 12
 
@@ -269,11 +298,357 @@ def decode_irrigation_status(value: Any) -> dict[str, Any] | None:
     }
 
 
+def decode_session_source(value: Any) -> dict[str, Any] | None:
+    """Da 0x501F, chi ha avviato la sessione: programma (e quale) o manuale.
+
+    Layout Zigbee2MQTT (irrigationScheduleStatus): byte 1 = indice del
+    programma, byte 2 = tipo (0 automatico, 1 manuale). Il "marcatore di
+    formato sempre 0x01" di decode_irrigation_status e' questo byte 2: nelle
+    catture c'erano solo corse manuali. Separata da decode_irrigation_status
+    per non toccare le entita' esistenti.
+    """
+    if value is None:
+        return None
+    if isinstance(value, foundation.Array):
+        value = value.value
+    try:
+        data = [int(item) for item in value]
+    except (TypeError, ValueError):
+        return None
+    if len(data) not in (IRRIGATION_STATUS_LEN_PREAMBLE, IRRIGATION_STATUS_LEN_RUNNING):
+        return None
+    return {
+        "session_state": data[0],
+        "session_plan_index": data[1],
+        "session_scheduled": data[2] == SESSION_TYPE_SCHEDULED,
+    }
+
+
+#: Byte 2 di 0x501F (scheduleTypeMap di Z2M).
+SESSION_TYPE_SCHEDULED: Final = 0x00
+SESSION_TYPE_MANUAL: Final = 0x01
+
+
+# --------------------------------------------------------------------------- #
+# Programmi on-device: payload dei comandi 0x06 (set) e 0x09 (report)
+# --------------------------------------------------------------------------- #
+
+PLAN_PAYLOAD_LEN: Final = 28
+PLAN_SLOTS: Final = 6
+#: 2000-01-01T00:00:00Z, base dei tempi "locali" del dispositivo.
+_Y2K: Final = datetime(2000, 1, 1, tzinfo=UTC)
+
+#: Valori che Zigbee2MQTT manda nei campi che la modalita' scelta non usa
+#: (default di parseIntWithDefault in sonoff.ts). Replicandoli, i byte inviati
+#: sono identici a quelli di Z2M; lo script Sonoff manda invece 0.
+PLAN_DEFAULT_IRRIGATION_DURATION: Final = 2
+PLAN_DEFAULT_INTERVAL_DURATION: Final = 3
+PLAN_DEFAULT_AMOUNT: Final = 30
+PLAN_DEFAULT_FAIL_SAFE: Final = 10
+
+
+class PlanLoopType(t.enum8):
+    """Ricorrenza di un programma (byte alto del loop type)."""
+
+    odd_days = 0x00
+    even_days = 0x01
+    day_interval = 0x02
+    weekdays = 0x03
+
+
+#: Bit di ciascun giorno nella maschera weekdays (bit0 = domenica).
+WEEKDAY_BITS: Final = {
+    "sunday": 0x01,
+    "monday": 0x02,
+    "tuesday": 0x04,
+    "wednesday": 0x08,
+    "thursday": 0x10,
+    "friday": 0x20,
+    "saturday": 0x40,
+}
+EVERY_DAY_MASK: Final = 0x7F
+
+
+@dataclass(frozen=True)
+class IrrigationPlan:
+    """Un programma, nei campi e nelle unita' del payload di 28 byte."""
+
+    index: int
+    enabled: bool
+    loop_type: PlanLoopType
+    #: Maschera dei giorni (weekdays), giorni di intervallo (day_interval), 0
+    #: altrimenti.
+    loop_value: int
+    #: Data locale da cui il programma vale.
+    enable_date: date
+    #: Ora di partenza in secondi dalla mezzanotte LOCALE.
+    start_seconds: int
+    mode: IrrigationMode = IrrigationMode.duration
+    #: Minuti totali (duration e duration_with_interval).
+    total_duration: int = 10
+    irrigation_duration: int = PLAN_DEFAULT_IRRIGATION_DURATION
+    interval_duration: int = PLAN_DEFAULT_INTERVAL_DURATION
+    amount_unit: IrrigationAmountUnit = IrrigationAmountUnit.liter
+    #: Volume (capacity), nell'unita' amount_unit.
+    amount: int = PLAN_DEFAULT_AMOUNT
+    fail_safe: int = PLAN_DEFAULT_FAIL_SAFE
+    #: Secondi Unix UTC (Z2M; lo script Sonoff usa l'epoca 2000).
+    created: int = 0
+
+    def same_settings(self, other: "IrrigationPlan") -> bool:
+        """Uguale a `other` a meno della data di creazione."""
+        return replace(self, created=0) == replace(other, created=0)
+
+
+def _ranged(value: Any, low: int, high: int, field_name: str) -> int:
+    try:
+        int_value = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} must be an integer") from exc
+    if not low <= int_value <= high:
+        raise ValueError(f"{field_name} must be in the range {low}..{high}")
+    return int_value
+
+
+def _date_to_device(value: date) -> int:
+    """Mezzanotte della data, come se fosse UTC, in secondi dal 2000 (Z2M)."""
+    midnight = datetime(value.year, value.month, value.day, tzinfo=UTC)
+    return int((midnight - _Y2K).total_seconds())
+
+
+def encode_irrigation_plan(plan: IrrigationPlan) -> bytes:
+    """Payload di 28 byte del comando 0x06, campi big-endian.
+
+    [0]      indice 0-5          [1]      abilitato 0/1
+    [2]      loop type           [3]      maschera giorni / giorni intervallo
+    [4..7]   data di validita'   [8]      modalita' (come 0x501D)
+    [9..12]  partenza, s dalla mezzanotte locale
+    [13..14] durata totale min   [15..16] durata irrigazione min
+    [17..18] durata intervallo   [19]     unita' (0 gal US, 1 litro)
+    [20..21] volume              [22..23] fail-safe min
+    [24..27] creazione, secondi Unix UTC
+    """
+    loop_type = PlanLoopType(plan.loop_type)
+    if loop_type == PlanLoopType.day_interval:
+        loop_value = _ranged(plan.loop_value, 1, 30, "loop_value (interval days)")
+    elif loop_type == PlanLoopType.weekdays:
+        loop_value = _ranged(plan.loop_value, 0, EVERY_DAY_MASK, "loop_value (weekday mask)")
+    elif loop_type in (PlanLoopType.odd_days, PlanLoopType.even_days):
+        loop_value = 0
+    else:
+        raise ValueError(f"unsupported loop_type {plan.loop_type!r}")
+    enable = _date_to_device(plan.enable_date)
+    if not 0 <= enable <= 0xFFFFFFFF:
+        raise ValueError("enable_date must not be before 2000-01-01")
+
+    payload = bytearray()
+    payload.append(_ranged(plan.index, 0, PLAN_SLOTS - 1, "index"))
+    payload.append(1 if plan.enabled else 0)
+    payload += bytes((int(loop_type), loop_value))
+    payload += enable.to_bytes(4, "big")
+    payload.append(int(IrrigationMode(plan.mode)))
+    payload += _ranged(plan.start_seconds, 0, 86399, "start_seconds").to_bytes(4, "big")
+    payload += _ranged(plan.total_duration, 0, 719, "total_duration").to_bytes(2, "big")
+    payload += _ranged(plan.irrigation_duration, 1, 60, "irrigation_duration").to_bytes(2, "big")
+    payload += _ranged(plan.interval_duration, 1, 60, "interval_duration").to_bytes(2, "big")
+    payload.append(int(IrrigationAmountUnit(plan.amount_unit)))
+    payload += _ranged(plan.amount, 1, 10000, "amount").to_bytes(2, "big")
+    payload += _ranged(plan.fail_safe, 0, 719, "fail_safe").to_bytes(2, "big")
+    payload += _ranged(plan.created, 0, 0xFFFFFFFF, "created").to_bytes(4, "big")
+    assert len(payload) == PLAN_PAYLOAD_LEN
+    return bytes(payload)
+
+
+def decode_irrigation_plan(data: bytes) -> IrrigationPlan | None:
+    """Decodifica il payload di un report 0x09 (o di un set 0x06)."""
+    if data is None or len(data) < PLAN_PAYLOAD_LEN:
+        return None
+    d = bytes(data)
+    enable = _Y2K + timedelta(seconds=int.from_bytes(d[4:8], "big"))
+    return IrrigationPlan(
+        index=d[0],
+        enabled=d[1] == 1,
+        loop_type=PlanLoopType(d[2]),
+        loop_value=d[3],
+        enable_date=enable.date(),
+        start_seconds=int.from_bytes(d[9:13], "big"),
+        mode=IrrigationMode(d[8]),
+        total_duration=int.from_bytes(d[13:15], "big"),
+        irrigation_duration=int.from_bytes(d[15:17], "big"),
+        interval_duration=int.from_bytes(d[17:19], "big"),
+        amount_unit=IrrigationAmountUnit(d[19]),
+        amount=int.from_bytes(d[20:22], "big"),
+        fail_safe=int.from_bytes(d[22:24], "big"),
+        created=int.from_bytes(d[24:28], "big"),
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Orologio: valori della risposta Time e tempi "locali dal 2000"
+# --------------------------------------------------------------------------- #
+
+#: Fuso usato per l'ora della valvola. None = fuso del processo; l'integrazione
+#: lo imposta al fuso configurato in HA (set_local_timezone).
+_local_tz: tzinfo | None = None
+
+
+def set_local_timezone(tz: tzinfo | None) -> None:
+    """Imposta il fuso con cui rispondere alla valvola e codificare gli orari."""
+    global _local_tz  # noqa: PLW0603
+    _local_tz = tz
+
+
+def local_timezone() -> tzinfo:
+    """Fuso in uso: quello impostato, altrimenti quello del processo."""
+    return _local_tz or datetime.now().astimezone().tzinfo or UTC
+
+
+def time_cluster_values(now: datetime, tz: tzinfo) -> dict[str, int]:
+    """Attributi Time come li manda Zigbee2MQTT a questa famiglia di valvole.
+
+    getTimeClusterAttributes di zigbee-herdsman, con DstStart/DstEnd forzati
+    a 0 da swvznGenTimeCompatResponse ("the device's Zigbee behavior is a bit
+    non-standard"): TimeZone e' l'offset STANDARD, LocalTime l'ora locale
+    effettiva, DstShift lo spostamento dell'ora legale dell'anno (anche
+    d'inverno), 0 dove l'ora legale non c'e'.
+    """
+    now = now.astimezone(UTC)
+    utc_time = int((now - _Y2K).total_seconds())
+    offset_now = now.astimezone(tz).utcoffset() or timedelta(0)
+    offsets = [
+        datetime(now.year, month, 1, 12, tzinfo=UTC).astimezone(tz).utcoffset()
+        or timedelta(0)
+        for month in (1, 7)
+    ]
+    standard = min(offsets) if offsets[0] != offsets[1] else offset_now
+    return {
+        "time": utc_time,
+        "time_zone": int(standard.total_seconds()),
+        "local_time": utc_time + int(offset_now.total_seconds()),
+        "dst_start": 0,
+        "dst_end": 0,
+        "dst_shift": int(abs(offsets[0] - offsets[1]).total_seconds()),
+    }
+
+
+def device_local_seconds(moment: datetime, tz: tzinfo) -> int:
+    """Istante -> secondi locali dal 2000, la base dei tempi del dispositivo."""
+    offset = moment.astimezone(tz).utcoffset() or timedelta(0)
+    return int((moment.astimezone(UTC) - _Y2K + offset).total_seconds())
+
+
+def device_local_to_datetime(value: int, tz: tzinfo) -> datetime:
+    """Secondi locali dal 2000 (es. tempi di 0x501F) -> datetime nel fuso tz."""
+    naive_local = datetime(2000, 1, 1) + timedelta(seconds=int(value))
+    return naive_local.replace(tzinfo=tz)
+
+
+def encode_rain_delay(end: datetime | None, tz: tzinfo) -> bytes:
+    """Payload del comando 0x08: fine del rinvio, 0 per annullarlo."""
+    value = 0 if end is None else device_local_seconds(end, tz)
+    return _ranged(value, 0, 0xFFFFFFFF, "rain delay end").to_bytes(4, "big")
+
+
+# --------------------------------------------------------------------------- #
+# Notifiche verso l'integrazione
+# --------------------------------------------------------------------------- #
+
+#: Callback registrati dall'integrazione; ricevono un dict con "type", "ieee",
+#: "endpoint_id" e i campi dell'evento. Chiamati nel loop di zigpy/HA.
+_schedule_listeners: list[Callable[[dict[str, Any]], None]] = []
+
+
+def add_schedule_listener(
+    listener: Callable[[dict[str, Any]], None],
+) -> Callable[[], None]:
+    """Registra un listener degli eventi dei programmi; ritorna la rimozione."""
+    _schedule_listeners.append(listener)
+
+    def _remove() -> None:
+        if listener in _schedule_listeners:
+            _schedule_listeners.remove(listener)
+
+    return _remove
+
+
+def _notify(cluster: CustomCluster, event_type: str, **fields: Any) -> None:
+    event = {
+        "type": event_type,
+        "ieee": str(cluster.endpoint.device.ieee),
+        "endpoint_id": cluster.endpoint.endpoint_id,
+        **fields,
+    }
+    for listener in list(_schedule_listeners):
+        try:
+            listener(event)
+        except Exception:  # noqa: BLE001 - un listener rotto non ferma zigpy
+            _LOGGER.exception("SWV-ZF2 schedule listener failed on %s", event)
+
+
+class RawPayload(bytes):
+    """Byte grezzi fino a fine frame: i comandi 0x06-0x0A non hanno lunghezza."""
+
+    def serialize(self) -> bytes:
+        """Byte cosi' come sono."""
+        return bytes(self)
+
+    @classmethod
+    def deserialize(cls, data: bytes) -> tuple["RawPayload", bytes]:
+        """Consuma tutto il resto del frame."""
+        return cls(data), b""
+
+
+#: Id dei comandi del cluster 0xFC11 usati dai programmi.
+CMD_PLAN_SET: Final = 0x06
+CMD_PLAN_REMOVE: Final = 0x07
+CMD_RAIN_DELAY: Final = 0x08
+CMD_PLAN_REPORT: Final = 0x09
+CMD_PLAN_REMOVED: Final = 0x0A
+
+
 class SWVZF2Cluster(CustomCluster):
     """Cluster privato Sonoff 0xFC11 per SWV-ZF2 (per endpoint/canale)."""
 
     cluster_id = 0xFC11
     ep_attribute = "swvzf2_cluster"
+
+    class ServerCommandDefs(BaseCommandDefs):
+        """Comandi verso la valvola (programmi on-device)."""
+
+        irrigation_plan_set = foundation.ZCLCommandDef(
+            id=CMD_PLAN_SET,
+            schema={"payload": RawPayload},
+            is_manufacturer_specific=False,
+        )
+        irrigation_plan_remove = foundation.ZCLCommandDef(
+            id=CMD_PLAN_REMOVE,
+            schema={"plan_index": t.uint8_t},
+            is_manufacturer_specific=False,
+        )
+        rain_delay = foundation.ZCLCommandDef(
+            id=CMD_RAIN_DELAY,
+            schema={"payload": RawPayload},
+            is_manufacturer_specific=False,
+        )
+
+    class ClientCommandDefs(BaseCommandDefs):
+        """Comandi dalla valvola: esito del set, report e rimozione."""
+
+        irrigation_plan_set_rsp = foundation.ZCLCommandDef(
+            id=CMD_PLAN_SET,
+            schema={"payload": RawPayload},
+            is_manufacturer_specific=False,
+        )
+        irrigation_plan_report = foundation.ZCLCommandDef(
+            id=CMD_PLAN_REPORT,
+            schema={"payload": RawPayload},
+            is_manufacturer_specific=False,
+        )
+        irrigation_plan_removed_report = foundation.ZCLCommandDef(
+            id=CMD_PLAN_REMOVED,
+            schema={"payload": RawPayload},
+            is_manufacturer_specific=False,
+        )
 
     class AttributeDefs(BaseAttributeDefs):
         """Attributi del cluster privato Sonoff."""
@@ -409,6 +784,122 @@ class SWVZF2Cluster(CustomCluster):
             self.warning("Ignoring unrecognised irrigation_status payload %r", value)
             return
         local.update_from_irrigation_status(decoded)
+        source = decode_session_source(value)
+        if source is not None:
+            # Endpoint del report = linea, per attribuire la sessione nello
+            # storico (Programma #n o manuale).
+            _notify(self, "session", **source)
+
+    # ── Programmi on-device ──
+
+    async def _send_schedule_command(
+        self, command_id: int, *, expect_reply: bool, **kwargs: Any
+    ) -> int | None:
+        """Invia un comando dei programmi; ritorna lo status (0 = ok) o None.
+
+        Se la risposta della valvola (0x06 con lo status, o un Default
+        Response) porta lo stesso TSN della richiesta, zigpy la consegna qui
+        come risultato e NON a handle_cluster_request: lo status va letto da
+        entrambe le parti. None = nessuno status (timeout o comando senza
+        risposta): a confermare il set restano il report 0x09.
+        """
+        try:
+            rsp = await self.command(
+                command_id, manufacturer=None, expect_reply=expect_reply, **kwargs
+            )
+        except TimeoutError:
+            self.debug("No reply to command 0x%02X", command_id)
+            return None
+        payload = getattr(rsp, "payload", None)
+        if isinstance(payload, bytes | bytearray):
+            if payload:
+                self._handle_schedule_frame(CMD_PLAN_SET, bytes(payload))
+                return payload[0]
+            return None
+        status = getattr(rsp, "status", None)
+        return int(status) if status is not None else None
+
+    async def set_irrigation_plan(self, plan: IrrigationPlan) -> int | None:
+        """Scrive un programma su questa linea (endpoint 1 = A, 2 = B)."""
+        payload = encode_irrigation_plan(plan)
+        _LOGGER.info(
+            "SWV-ZF2 %s ep%s: writing plan %s: %s",
+            self.endpoint.device.ieee,
+            self.endpoint.endpoint_id,
+            plan.index,
+            payload.hex(),
+        )
+        # Come Z2M: Default Response richiesto.
+        return await self._send_schedule_command(
+            CMD_PLAN_SET, expect_reply=True, payload=RawPayload(payload)
+        )
+
+    async def remove_irrigation_plan(self, index: int) -> None:
+        """Cancella un programma; la conferma arriva come report 0x0A."""
+        index = _ranged(index, 0, PLAN_SLOTS - 1, "index")
+        _LOGGER.info(
+            "SWV-ZF2 %s ep%s: removing plan %s",
+            self.endpoint.device.ieee,
+            self.endpoint.endpoint_id,
+            index,
+        )
+        # Come Z2M: disableDefaultResponse, nessuna risposta attesa.
+        await self._send_schedule_command(
+            CMD_PLAN_REMOVE, expect_reply=False, plan_index=t.uint8_t(index)
+        )
+
+    async def set_rain_delay(self, end: datetime | None) -> None:
+        """Sospende i programmi fino a `end` (None annulla). Globale, endpoint 1."""
+        payload = encode_rain_delay(end, local_timezone())
+        _LOGGER.info(
+            "SWV-ZF2 %s: rain delay until %s (%s)",
+            self.endpoint.device.ieee,
+            end,
+            payload.hex(),
+        )
+        await self._send_schedule_command(
+            CMD_RAIN_DELAY, expect_reply=False, payload=RawPayload(payload)
+        )
+
+    def _handle_schedule_frame(self, command_id: int, payload: bytes) -> None:
+        """Esito del set (0x06), report (0x09) o rimozione (0x0A) dalla valvola."""
+        if command_id == CMD_PLAN_SET:
+            status = payload[0] if payload else None
+            if status not in (None, 0):
+                self.warning("Irrigation plan write rejected, status=%s", status)
+            _notify(self, "plan_ack", status=status)
+        elif command_id == CMD_PLAN_REPORT:
+            plan = decode_irrigation_plan(payload)
+            if plan is None:
+                self.warning("Ignoring short irrigation plan report %s", payload.hex())
+                return
+            _notify(self, "plan_report", plan=plan)
+        elif command_id == CMD_PLAN_REMOVED and payload:
+            _notify(self, "plan_removed", index=payload[0])
+
+    def handle_cluster_request(
+        self,
+        hdr: foundation.ZCLHeader,
+        args: Any,
+        *,
+        dst_addressing: Any = None,
+    ) -> None:
+        """Intercetta i comandi dei programmi in arrivo dalla valvola."""
+        if hdr.direction == foundation.Direction.Server_to_Client and hdr.command_id in (
+            CMD_PLAN_SET,
+            CMD_PLAN_REPORT,
+            CMD_PLAN_REMOVED,
+        ):
+            payload = getattr(args, "payload", b"") or b""
+            _LOGGER.info(
+                "SWV-ZF2 %s ep%s: received 0x%02X %s",
+                self.endpoint.device.ieee,
+                self.endpoint.endpoint_id,
+                hdr.command_id,
+                bytes(payload).hex(),
+            )
+            self._handle_schedule_frame(hdr.command_id, bytes(payload))
+        super().handle_cluster_request(hdr, args, dst_addressing=dst_addressing)
 
     def _update_attribute(self, attrid, value):
         """Intercetta gli attributi array per evitare errori appdb.
@@ -671,6 +1162,83 @@ class SWVZF2ProgressCluster(LocalDataCluster):
         )
 
 
+class SWVZF2TimeCluster(CustomCluster, Time):
+    """Cluster Time in USCITA (client) sull'endpoint 1: l'ora per la valvola.
+
+    La valvola chiede Time, LocalTime, TimeZone, DstStart, DstEnd e DstShift
+    (osservato il 2026-10-17 su fw 0x00001009). Senza questo cluster zigpy
+    scarta la richiesta ("Ignoring message on unknown cluster: 0x000a") e la
+    valvola, che esegue i programmi sul proprio orologio locale, resta
+    all'ora che ha. Le risposte seguono time_cluster_values; ogni richiesta
+    lascia una riga di log INFO e un evento "time_sync" per l'integrazione.
+    """
+
+    _snapshot: dict[str, int] | None = None
+
+    def handle_cluster_general_request(
+        self,
+        hdr: foundation.ZCLHeader,
+        args: Any,
+        *,
+        dst_addressing: Any = None,
+    ) -> None:
+        """Fotografa l'ora una volta per richiesta, la logga, poi risponde."""
+        if hdr.command_id == foundation.GeneralCommand.Read_Attributes:
+            tz = local_timezone()
+            self._snapshot = time_cluster_values(datetime.now(UTC), tz)
+            requested = [int(a) for a in getattr(args, "attribute_ids", [])]
+            local = _Y2K + timedelta(seconds=self._snapshot["local_time"])
+            _LOGGER.info(
+                "SWV-ZF2 %s asked for the time (attributes %s); replying local "
+                "%s, time zone %+d s, DST shift %d s",
+                self.endpoint.device.ieee,
+                [f"0x{a:04X}" for a in requested],
+                local.strftime("%Y-%m-%d %H:%M:%S"),
+                self._snapshot["time_zone"],
+                self._snapshot["dst_shift"],
+            )
+            _notify(
+                self,
+                "time_sync",
+                attributes=requested,
+                values=dict(self._snapshot),
+                at=datetime.now(UTC),
+            )
+        super().handle_cluster_general_request(
+            hdr, args, dst_addressing=dst_addressing
+        )
+
+    def _value(self, name: str) -> int:
+        snapshot = self._snapshot or time_cluster_values(
+            datetime.now(UTC), local_timezone()
+        )
+        return snapshot[name]
+
+    def handle_read_attribute_time(self) -> t.UTCTime:
+        """Secondi UTC dal 2000."""
+        return t.UTCTime(self._value("time"))
+
+    def handle_read_attribute_time_zone(self) -> t.int32s:
+        """Offset standard (senza ora legale), in secondi."""
+        return t.int32s(self._value("time_zone"))
+
+    def handle_read_attribute_local_time(self) -> t.LocalTime:
+        """Ora locale effettiva, secondi dal 2000."""
+        return t.LocalTime(self._value("local_time"))
+
+    def handle_read_attribute_dst_start(self) -> t.uint32_t:
+        """Sempre 0, come Z2M per questa famiglia."""
+        return t.uint32_t(self._value("dst_start"))
+
+    def handle_read_attribute_dst_end(self) -> t.uint32_t:
+        """Sempre 0, come Z2M per questa famiglia."""
+        return t.uint32_t(self._value("dst_end"))
+
+    def handle_read_attribute_dst_shift(self) -> t.int32s:
+        """Spostamento dell'ora legale dell'anno, in secondi."""
+        return t.int32s(self._value("dst_shift"))
+
+
 def _register_progress_entities(builder: QuirkBuilder) -> QuirkBuilder:
     """Registra i sensori di avanzamento della sessione (da 0x501F)."""
     return (
@@ -794,6 +1362,10 @@ _builder = (
     # Idem per l'avanzamento: 0x501F puo' arrivare da entrambi gli endpoint ma
     # confluisce in un unico cluster locale.
     .adds(SWVZF2ProgressCluster, endpoint_id=CONFIG_ENDPOINT)
+    # Cluster Time in uscita: la valvola chiede l'ora (vedi SWVZF2TimeCluster).
+    # replaces e non adds: se una firmware futura lo dichiarasse gia', lo
+    # sostituisce invece di duplicarlo.
+    .replaces(SWVZF2TimeCluster, cluster_type=ClusterType.Client, endpoint_id=1)
     # Perdita acqua (bit1 di 0x500C)
     .binary_sensor(
         SWVZF2Cluster.AttributeDefs.water_valve_state.name,

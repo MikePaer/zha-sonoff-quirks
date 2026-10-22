@@ -1,0 +1,472 @@
+{
+  "generator": "tests/z2m_oracle/gen_vectors.cjs",
+  "zigbee-herdsman-converters": "26.117.0",
+  "zigbee-herdsman": "10.10.0",
+  "endpoint_map": {
+    "1": 1,
+    "2": 2
+  },
+  "plans": [
+    {
+      "name": "daily_lineA_0500_11min",
+      "endpoint_name": "1",
+      "value": {
+        "plan_index": 0,
+        "enable_state": true,
+        "loop_type_mode": "weekdays",
+        "loop_type_week_days": {
+          "sunday": true,
+          "monday": true,
+          "tuesday": true,
+          "wednesday": true,
+          "thursday": true,
+          "friday": true,
+          "saturday": true
+        },
+        "enable_date": "2026-10-22",
+        "start_time": "05:00",
+        "irrigation_mode": "duration",
+        "irrigation_total_duration": 11,
+        "irrigation_amount_unit": "liter",
+        "create_datetime": "2026-10-22T09:30:00-07:00"
+      },
+      "endpoint_id": 1,
+      "command": "irrigationPlanSettings",
+      "payload_hex": "0001037f326c0e800000004650000b0002000301001e000a6ada3a08"
+    },
+    {
+      "name": "daily_lineA_disabled",
+      "endpoint_name": "1",
+      "value": {
+        "plan_index": 0,
+        "enable_state": false,
+        "loop_type_mode": "weekdays",
+        "loop_type_week_days": {
+          "sunday": true,
+          "monday": true,
+          "tuesday": true,
+          "wednesday": true,
+          "thursday": true,
+          "friday": true,
+          "saturday": true
+        },
+        "enable_date": "2026-10-22",
+        "start_time": "05:00",
+        "irrigation_mode": "duration",
+        "irrigation_total_duration": 11,
+        "irrigation_amount_unit": "liter",
+        "create_datetime": "2026-10-22T09:30:00-07:00"
+      },
+      "endpoint_id": 1,
+      "command": "irrigationPlanSettings",
+      "payload_hex": "0000037f326c0e800000004650000b0002000301001e000a6ada3a08"
+    },
+    {
+      "name": "daily_lineB_0512",
+      "endpoint_name": "2",
+      "value": {
+        "plan_index": 0,
+        "enable_state": true,
+        "loop_type_mode": "weekdays",
+        "loop_type_week_days": {
+          "sunday": true,
+          "monday": true,
+          "tuesday": true,
+          "wednesday": true,
+          "thursday": true,
+          "friday": true,
+          "saturday": true
+        },
+        "enable_date": "2026-10-22",
+        "start_time": "05:12",
+        "irrigation_mode": "duration",
+        "irrigation_total_duration": 11,
+        "irrigation_amount_unit": "liter",
+        "create_datetime": "2026-10-22T16:30:00Z"
+      },
+      "endpoint_id": 2,
+      "command": "irrigationPlanSettings",
+      "payload_hex": "0001037f326c0e800000004920000b0002000301001e000a6ada3a08"
+    },
+    {
+      "name": "mon_wed_fri_index3",
+      "endpoint_name": "1",
+      "value": {
+        "plan_index": 3,
+        "enable_state": true,
+        "loop_type_mode": "weekdays",
+        "loop_type_week_days": {
+          "monday": true,
+          "wednesday": true,
+          "friday": true
+        },
+        "enable_date": "2026-11-02",
+        "start_time": "18:45",
+        "irrigation_mode": "duration",
+        "irrigation_total_duration": 20,
+        "irrigation_amount_unit": "liter",
+        "create_datetime": "2026-10-30T12:00:00+00:00"
+      },
+      "endpoint_id": 1,
+      "command": "irrigationPlanSettings",
+      "payload_hex": "0301032a327a8f0000000107ac00140002000301001e000a6ae486c0"
+    },
+    {
+      "name": "odd_days",
+      "endpoint_name": "1",
+      "value": {
+        "plan_index": 1,
+        "enable_state": true,
+        "loop_type_mode": "odd_days",
+        "enable_date": "2026-12-15",
+        "start_time": "06:30",
+        "irrigation_mode": "duration",
+        "irrigation_total_duration": 5,
+        "irrigation_amount_unit": "liter",
+        "create_datetime": "2026-12-14T23:59:59-08:00"
+      },
+      "endpoint_id": 1,
+      "command": "irrigationPlanSettings",
+      "payload_hex": "0101000032b33f800000005b6800050002000301001e000a6b20f37f"
+    },
+    {
+      "name": "even_days_lineB",
+      "endpoint_name": "2",
+      "value": {
+        "plan_index": 2,
+        "enable_state": true,
+        "loop_type_mode": "even_days",
+        "enable_date": "2027-03-14",
+        "start_time": "00:00",
+        "irrigation_mode": "duration",
+        "irrigation_total_duration": 1,
+        "irrigation_amount_unit": "liter",
+        "create_datetime": "2027-03-14T10:00:00-07:00"
+      },
+      "endpoint_id": 2,
+      "command": "irrigationPlanSettings",
+      "payload_hex": "0201010033289500000000000000010002000301001e000a6b96c790"
+    },
+    {
+      "name": "every_3_days",
+      "endpoint_name": "1",
+      "value": {
+        "plan_index": 4,
+        "enable_state": true,
+        "loop_type_mode": "day_interval",
+        "loop_type_interval_days": 3,
+        "enable_date": "2026-10-25",
+        "start_time": "23:59",
+        "irrigation_mode": "duration",
+        "irrigation_total_duration": 719,
+        "irrigation_amount_unit": "liter",
+        "create_datetime": "2026-10-22T00:00:00Z"
+      },
+      "endpoint_id": 1,
+      "command": "irrigationPlanSettings",
+      "payload_hex": "0401020332700300000001514402cf0002000301001e000a6ad95200"
+    },
+    {
+      "name": "every_30_days_index5",
+      "endpoint_name": "2",
+      "value": {
+        "plan_index": 5,
+        "enable_state": true,
+        "loop_type_mode": "day_interval",
+        "loop_type_interval_days": 30,
+        "enable_date": "2026-01-01",
+        "start_time": "12:00",
+        "irrigation_mode": "duration",
+        "irrigation_total_duration": 0,
+        "irrigation_amount_unit": "liter",
+        "create_datetime": "2026-01-01T00:00:00Z"
+      },
+      "endpoint_id": 2,
+      "command": "irrigationPlanSettings",
+      "payload_hex": "0501021e30e87580000000a8c000000002000301001e000a6955b900"
+    },
+    {
+      "name": "capacity_50L_failsafe15",
+      "endpoint_name": "1",
+      "value": {
+        "plan_index": 1,
+        "enable_state": true,
+        "loop_type_mode": "weekdays",
+        "loop_type_week_days": {
+          "saturday": true,
+          "sunday": true
+        },
+        "enable_date": "2026-10-24",
+        "start_time": "07:15",
+        "irrigation_mode": "capacity",
+        "irrigation_amount": 50,
+        "fail_safe": 15,
+        "irrigation_amount_unit": "liter",
+        "create_datetime": "2026-10-22T09:30:00-07:00"
+      },
+      "endpoint_id": 1,
+      "command": "irrigationPlanSettings",
+      "payload_hex": "01010341326eb18001000065f4000a00020003010032000f6ada3a08"
+    },
+    {
+      "name": "capacity_us_gallon",
+      "endpoint_name": "2",
+      "value": {
+        "plan_index": 0,
+        "enable_state": true,
+        "loop_type_mode": "odd_days",
+        "enable_date": "2026-10-23",
+        "start_time": "04:00",
+        "irrigation_mode": "capacity",
+        "irrigation_amount": 10000,
+        "fail_safe": 719,
+        "irrigation_amount_unit": "us_gallon",
+        "create_datetime": "2026-10-22T09:30:00-07:00"
+      },
+      "endpoint_id": 2,
+      "command": "irrigationPlanSettings",
+      "payload_hex": "00010000326d60000100003840000a0002000300271002cf6ada3a08"
+    },
+    {
+      "name": "duration_with_interval",
+      "endpoint_name": "1",
+      "value": {
+        "plan_index": 2,
+        "enable_state": true,
+        "loop_type_mode": "weekdays",
+        "loop_type_week_days": {
+          "tuesday": true,
+          "thursday": true
+        },
+        "enable_date": "2026-10-27",
+        "start_time": "05:30",
+        "irrigation_mode": "duration_with_interval",
+        "irrigation_total_duration": 20,
+        "irrigation_duration": 5,
+        "interval_duration": 3,
+        "irrigation_amount_unit": "liter",
+        "create_datetime": "2026-10-22T09:30:00-07:00"
+      },
+      "endpoint_id": 1,
+      "command": "irrigationPlanSettings",
+      "payload_hex": "020103143272a6000200004d5800140005000301001e000a6ada3a08"
+    },
+    {
+      "name": "explicit_unused_fields",
+      "endpoint_name": "1",
+      "value": {
+        "plan_index": 0,
+        "enable_state": true,
+        "loop_type_mode": "weekdays",
+        "loop_type_week_days": {
+          "sunday": true
+        },
+        "enable_date": "2026-10-25",
+        "start_time": "05:00",
+        "irrigation_mode": "duration",
+        "irrigation_total_duration": 9,
+        "irrigation_duration": 60,
+        "interval_duration": 1,
+        "irrigation_amount": 1,
+        "fail_safe": 0,
+        "irrigation_amount_unit": "liter",
+        "create_datetime": "2026-10-22T09:30:00-07:00"
+      },
+      "endpoint_id": 1,
+      "command": "irrigationPlanSettings",
+      "payload_hex": "000103013270030000000046500009003c000101000100006ada3a08"
+    }
+  ],
+  "removes": [
+    {
+      "endpoint_name": "1",
+      "plan_index": 0,
+      "endpoint_id": 1,
+      "command": "irrigationPlanRemove",
+      "payload_hex": "00"
+    },
+    {
+      "endpoint_name": "2",
+      "plan_index": 5,
+      "endpoint_id": 2,
+      "command": "irrigationPlanRemove",
+      "payload_hex": "05"
+    }
+  ],
+  "time": [
+    {
+      "tz": "America/Los_Angeles",
+      "now": "2026-10-22T16:41:22Z",
+      "expected": {
+        "time": 846002482,
+        "time_zone": -28800,
+        "local_time": 845977282,
+        "dst_shift": 3600,
+        "dst_start": 0,
+        "dst_end": 0
+      }
+    },
+    {
+      "tz": "America/Los_Angeles",
+      "now": "2026-11-01T08:59:59Z",
+      "expected": {
+        "time": 846838799,
+        "time_zone": -28800,
+        "local_time": 846813599,
+        "dst_shift": 3600,
+        "dst_start": 0,
+        "dst_end": 0
+      }
+    },
+    {
+      "tz": "America/Los_Angeles",
+      "now": "2026-11-01T09:00:00Z",
+      "expected": {
+        "time": 846838800,
+        "time_zone": -28800,
+        "local_time": 846810000,
+        "dst_shift": 3600,
+        "dst_start": 0,
+        "dst_end": 0
+      }
+    },
+    {
+      "tz": "America/Los_Angeles",
+      "now": "2026-12-25T12:00:00Z",
+      "expected": {
+        "time": 851515200,
+        "time_zone": -28800,
+        "local_time": 851486400,
+        "dst_shift": 3600,
+        "dst_start": 0,
+        "dst_end": 0
+      }
+    },
+    {
+      "tz": "America/Los_Angeles",
+      "now": "2027-03-14T10:00:00Z",
+      "expected": {
+        "time": 858333600,
+        "time_zone": -28800,
+        "local_time": 858308400,
+        "dst_shift": 3600,
+        "dst_start": 0,
+        "dst_end": 0
+      }
+    },
+    {
+      "tz": "Europe/Rome",
+      "now": "2026-07-01T10:00:00Z",
+      "expected": {
+        "time": 836215200,
+        "time_zone": 3600,
+        "local_time": 836222400,
+        "dst_shift": 3600,
+        "dst_start": 0,
+        "dst_end": 0
+      }
+    },
+    {
+      "tz": "Europe/Rome",
+      "now": "2026-01-15T10:00:00Z",
+      "expected": {
+        "time": 821786400,
+        "time_zone": 3600,
+        "local_time": 821790000,
+        "dst_shift": 3600,
+        "dst_start": 0,
+        "dst_end": 0
+      }
+    },
+    {
+      "tz": "Australia/Sydney",
+      "now": "2026-01-15T10:00:00Z",
+      "expected": {
+        "time": 821786400,
+        "time_zone": 36000,
+        "local_time": 821826000,
+        "dst_shift": 3600,
+        "dst_start": 0,
+        "dst_end": 0
+      }
+    },
+    {
+      "tz": "Australia/Sydney",
+      "now": "2026-07-15T10:00:00Z",
+      "expected": {
+        "time": 837424800,
+        "time_zone": 36000,
+        "local_time": 837460800,
+        "dst_shift": 3600,
+        "dst_start": 0,
+        "dst_end": 0
+      }
+    },
+    {
+      "tz": "Asia/Tokyo",
+      "now": "2026-10-22T16:41:22Z",
+      "expected": {
+        "time": 846002482,
+        "time_zone": 32400,
+        "local_time": 846034882,
+        "dst_shift": 0,
+        "dst_start": 0,
+        "dst_end": 0
+      }
+    },
+    {
+      "tz": "UTC",
+      "now": "2026-10-22T16:41:22Z",
+      "expected": {
+        "time": 846002482,
+        "time_zone": 0,
+        "local_time": 846002482,
+        "dst_shift": 0,
+        "dst_start": 0,
+        "dst_end": 0
+      }
+    }
+  ],
+  "rain_delay": [
+    {
+      "tz": "America/Los_Angeles",
+      "now": "2026-10-22T16:00:00Z",
+      "value": "2026-10-23T09:00:00-07:00",
+      "expected": {
+        "endpoint_id": 1,
+        "command": "rainDelay",
+        "payload_hex": "326dde90"
+      }
+    },
+    {
+      "tz": "America/Los_Angeles",
+      "now": "2026-12-01T16:00:00Z",
+      "value": "2026-12-03T08:00:00-08:00",
+      "expected": {
+        "endpoint_id": 1,
+        "command": "rainDelay",
+        "payload_hex": "32a3de00"
+      }
+    },
+    {
+      "tz": "Europe/Rome",
+      "now": "2026-07-01T08:00:00Z",
+      "value": "2026-07-02T10:00:00Z",
+      "expected": {
+        "endpoint_id": 1,
+        "command": "rainDelay",
+        "payload_hex": "31d90f40"
+      }
+    },
+    {
+      "tz": "America/Los_Angeles",
+      "now": "2026-10-22T16:00:00Z",
+      "value": "0",
+      "expected": {
+        "endpoint_id": 1,
+        "command": "rainDelay",
+        "payload_hex": "00000000"
+      }
+    }
+  ]
+}
