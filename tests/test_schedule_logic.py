@@ -2,6 +2,7 @@
 
 from datetime import date, datetime, timedelta
 import importlib.util
+import json
 import pathlib
 import sys
 from zoneinfo import ZoneInfo
@@ -27,6 +28,15 @@ sys.modules.setdefault("schedule_logic", sl)
 _spec.loader.exec_module(sl)
 
 LA = ZoneInfo("America/Los_Angeles")
+#: Payload dei vettori Z2M (tests/fixtures/z2m_vectors.json), per nome.
+Z2M = {
+    case["name"]: case["payload_hex"]
+    for case in json.loads(
+        (pathlib.Path(__file__).parent / "fixtures" / "z2m_vectors.json").read_text(
+            "utf-8"
+        )
+    )["plans"]
+}
 TODAY = date(2026, 10, 22)
 CREATED = 0x6ADA3A08  # 2026-10-22T09:30:00-07:00, come nei vettori Z2M
 
@@ -77,16 +87,30 @@ def test_weekday_mask_accepts_ha_short_names():
 
 
 def test_daily_minutes_plan_is_the_z2m_vector():
-    """Lo stesso programma del vettore Z2M daily_lineA_0500_11min."""
+    """Lo stesso programma del vettore Z2M program_front_lawn (fail_safe 0)."""
     plan = sl.build_plan(
         index=0, start_time="05:00", minutes=11, enable_date=TODAY, created=CREATED
     )
 
     assert plan.loop_type == PlanLoopType.weekdays
     assert plan.loop_value == EVERY_DAY_MASK
-    assert encode_irrigation_plan(plan).hex() == (
-        "0001037f326c0e800000004650000b0002000301001e000a6ada3a08"
-    )
+    assert plan.fail_safe == 0
+    assert encode_irrigation_plan(plan).hex() == Z2M["program_front_lawn"]
+
+
+def test_whole_program_matches_z2m_byte_for_byte():
+    """I 4 programmi del 2026-10-22, e una zona spenta, come li manda Z2M."""
+    plans = _plans(ZONES)
+    off = [ZONES[0], sl.ProgramZone("switch.front_boxes", 11, False), *ZONES[2:]]
+    disabled = _plans(off, plans)["switch.front_boxes"]
+
+    assert {k: encode_irrigation_plan(p).hex() for k, p in plans.items()} == {
+        "switch.front_lawn": Z2M["program_front_lawn"],
+        "switch.front_boxes": Z2M["program_front_boxes"],
+        "switch.back_lawn": Z2M["program_back_lawn"],
+        "switch.back_boxes": Z2M["program_back_boxes"],
+    }
+    assert encode_irrigation_plan(disabled).hex() == Z2M["program_zone_disabled"]
 
 
 def test_liters_plan_uses_capacity_mode():

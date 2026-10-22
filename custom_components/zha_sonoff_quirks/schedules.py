@@ -52,8 +52,8 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 import voluptuous as vol
 
-from .const import CHANNELS, DOMAIN, SWV_MODELS
-from .helpers import find_swv_switches
+from .const import CHANNELS, DOMAIN, EVENT_IRRIGATION_COMPLETED, SWV_MODELS
+from .helpers import find_swv_switches, resolve_entities
 from .history import SwvRunLog
 from .quirks import sonoff_swv_zf2 as quirk
 from .schedule_logic import (
@@ -145,6 +145,15 @@ class SwvScheduleManager:
 
         self._unsubs.append(
             self.hass.bus.async_listen(EVENT_CORE_CONFIG_UPDATE, _core_config_updated)
+        )
+
+        @callback
+        def _run_completed(event: Event) -> None:
+            if device_id := event.data.get("device_id"):
+                self.hass.async_create_task(self.async_enforce_manual_cap(device_id))
+
+        self._unsubs.append(
+            self.hass.bus.async_listen(EVENT_IRRIGATION_COMPLETED, _run_completed)
         )
         self._program_debouncer = Debouncer(
             self.hass,
@@ -581,7 +590,7 @@ class SwvScheduleManager:
         config = self._data.get("program")
         if not config:
             return
-        entities = [config.get("start_entity")]
+        entities = [config.get("start_entity"), config.get("manual_cap_entity")]
         for zone in config["zones"]:
             entities += [zone.get("minutes_entity"), zone.get("enabled_entity")]
         entities = sorted({e for e in entities if e})
@@ -685,6 +694,78 @@ class SwvScheduleManager:
                 plan.total_duration,
                 status,
             )
+        await self.async_enforce_manual_cap()
+
+    # ── manual cap ──
+    async def async_enforce_manual_cap(self, device_id: str | None = None) -> None:
+        """Put each program valve's manual default back to the cap.
+
+        0x501D (Simone's "Irrigation mode" / "Irrigation duration" entities)
+        is the one duration the valve applies to EVERY open that brings none:
+        the button, a bare switch.turn_on, HA down. It is also what the
+        card's timed start writes before opening a line, so after a 15-minute
+        card run the "cap" would silently be 15. This writes it back to the
+        program's manual cap whenever no line of the valve is open — after
+        each run, when the cap setting changes, and at startup. Writing while
+        a line runs is skipped: the next run-completed event retries.
+        """
+        config = self._data.get("program") or {}
+        if not (config.get("manual_cap_minutes") or config.get("manual_cap_entity")):
+            return
+        try:
+            cap = self._resolve(
+                config.get("manual_cap_minutes"),
+                config.get("manual_cap_entity"),
+                "minutes",
+            )
+        except (HomeAssistantError, ValueError) as err:
+            _LOGGER.warning("Manual cap not applied: %s", err)
+            return
+        if not 1 <= int(cap) <= 719:
+            _LOGGER.warning("Manual cap not applied: %s min is outside 1-719", cap)
+            return
+        lines = find_swv_switches(self.hass)
+        zone_switches = {zone["switch"] for zone in config.get("zones", [])}
+        devices = {i["device_id"] for i in lines if i["switch"] in zone_switches}
+        if device_id is not None:
+            devices &= {device_id}
+        for dev in sorted(devices):
+            switches = [i["switch"] for i in lines if i["device_id"] == dev]
+            if any(
+                (state := self.hass.states.get(s)) is not None and state.state == "on"
+                for s in switches
+            ):
+                continue
+            entities = resolve_entities(self.hass, dev, "1")
+            try:
+                await self._ensure_state(
+                    entities["mode"], "duration", "select", "select_option", "option"
+                )
+                await self._ensure_state(
+                    entities["duration"], int(cap), "number", "set_value", "value"
+                )
+            except Exception as err:  # noqa: BLE001 - retried on the next run
+                _LOGGER.warning("Manual cap not applied on %s: %s", dev, err)
+
+    async def _ensure_state(
+        self, entity_id: str | None, wanted: Any, domain: str, service: str, key: str
+    ) -> None:
+        if entity_id is None:
+            raise HomeAssistantError(f"no {domain} entity for the manual default")
+        state = self.hass.states.get(entity_id)
+        current = state.state if state else None
+        if domain == "number":
+            try:
+                if current is not None and float(current) == float(wanted):
+                    return
+            except ValueError:
+                pass
+        elif current == wanted:
+            return
+        _LOGGER.info("Manual cap: setting %s to %s", entity_id, wanted)
+        await self.hass.services.async_call(
+            domain, service, {"entity_id": entity_id, key: wanted}, blocking=True
+        )
 
 
 # ── services ──
@@ -776,6 +857,10 @@ SET_PROGRAM_SCHEMA = vol.All(
             vol.Optional("gap_minutes", default=1): vol.All(
                 vol.Coerce(int), vol.Range(min=0, max=60)
             ),
+            vol.Exclusive("manual_cap_minutes", "manual_cap"): vol.All(
+                vol.Coerce(int), vol.Range(min=1, max=719)
+            ),
+            vol.Exclusive("manual_cap_entity", "manual_cap"): cv.entity_id,
             vol.Optional("slot", default=0): vol.All(
                 vol.Coerce(int), vol.Range(min=0, max=quirk.PLAN_SLOTS - 1)
             ),
@@ -859,7 +944,15 @@ def async_setup_schedule_services(
             )
         config = {
             key: call.data[key]
-            for key in ("start_time", "start_entity", "gap_minutes", "slot", "zones")
+            for key in (
+                "start_time",
+                "start_entity",
+                "gap_minutes",
+                "slot",
+                "zones",
+                "manual_cap_minutes",
+                "manual_cap_entity",
+            )
             if key in call.data
         }
         await manager.async_set_program(config)

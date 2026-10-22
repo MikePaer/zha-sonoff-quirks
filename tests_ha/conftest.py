@@ -81,6 +81,7 @@ class FakeValve:
     set_status: int | None = 0
     report_after_set: bool = False
     report_removed: bool = True
+    manual: dict[str, str] = field(default_factory=dict)
     sent: list[tuple[str, int, Any]] = field(default_factory=list)
 
     def endpoint(self, endpoint_id: int) -> FakeEndpoint:
@@ -117,7 +118,41 @@ def _add_valve(
         )
         hass.states.async_set(reg.entity_id, "off")
         switches[channel] = reg.entity_id
-    return FakeValve(ieee=ieee, device_id=device.id, switches=switches)
+    # Simone's manual-default entities (0x501D), as the quirk creates them.
+    manual = {}
+    for domain, suffix, state in (
+        ("select", "irrigation_mode", "duration"),
+        ("number", "irrigation_duration", "10"),
+    ):
+        reg = ent_reg.async_get_or_create(
+            domain,
+            "zha",
+            f"{ieee}-1-{suffix}",
+            device_id=device.id,
+            suggested_object_id=f"{name}_{suffix}",
+        )
+        hass.states.async_set(reg.entity_id, state)
+        manual[suffix] = reg.entity_id
+    return FakeValve(ieee=ieee, device_id=device.id, switches=switches, manual=manual)
+
+
+@pytest.fixture
+def manual_writes(hass: HomeAssistant) -> list[tuple[str, Any]]:
+    """Stand-in select/number services: record writes, update the state."""
+    writes: list[tuple[str, Any]] = []
+
+    async def _write(call):
+        value = call.data.get("option", call.data.get("value"))
+        entity_ids = call.data["entity_id"]
+        if isinstance(entity_ids, str):
+            entity_ids = [entity_ids]
+        for entity_id in entity_ids:
+            writes.append((entity_id, value))
+            hass.states.async_set(entity_id, str(value))
+
+    hass.services.async_register("select", "select_option", _write)
+    hass.services.async_register("number", "set_value", _write)
+    return writes
 
 
 @pytest.fixture

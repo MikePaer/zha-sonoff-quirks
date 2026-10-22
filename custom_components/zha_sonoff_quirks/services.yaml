@@ -321,6 +321,22 @@ set_program:
           min: 0
           max: 5
           mode: box
+    manual_cap_minutes:
+      required: false
+      example: 11
+      selector:
+        number:
+          min: 1
+          max: 719
+          unit_of_measurement: min
+          mode: box
+    manual_cap_entity:
+      required: false
+      example: input_number.irrigation_manual_cap
+      selector:
+        entity:
+          filter:
+            - domain: [input_number]
     zones:
       required: true
       example: >-

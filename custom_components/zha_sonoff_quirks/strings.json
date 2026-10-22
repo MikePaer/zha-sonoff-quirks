@@ -182,6 +182,14 @@
         "zones": {
           "name": "Zones",
           "description": "Ordered list of zones: each has a line switch, minutes or a minutes helper, and optionally enabled or an on/off helper."
+        },
+        "manual_cap_minutes": {
+          "name": "Manual cap",
+          "description": "Minutes the valve allows any run started without its own length (button, plain switch on, Home Assistant down). Restored on each program valve after every run."
+        },
+        "manual_cap_entity": {
+          "name": "Manual cap helper",
+          "description": "An input_number holding the manual cap in minutes; changing it rewrites the valves' manual default."
         }
       }
     },

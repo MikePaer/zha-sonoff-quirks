@@ -28,6 +28,7 @@ try:
     from .quirks.sonoff_swv_zf2 import (
         EVERY_DAY_MASK,
         PLAN_DEFAULT_FAIL_SAFE,
+        PLAN_DURATION_FAIL_SAFE,
         PLAN_SLOTS,
         WEEKDAY_BITS,
         IrrigationAmountUnit,
@@ -39,6 +40,7 @@ except ImportError:  # loaded standalone by the tests (no package parent)
     from sonoff_swv_zf2 import (  # type: ignore[no-redef]
         EVERY_DAY_MASK,
         PLAN_DEFAULT_FAIL_SAFE,
+        PLAN_DURATION_FAIL_SAFE,
         PLAN_SLOTS,
         WEEKDAY_BITS,
         IrrigationAmountUnit,
@@ -139,7 +141,9 @@ def build_plan(
 
     Exactly one of ``minutes`` (duration mode) or ``liters`` (capacity mode).
     Fields the chosen mode does not use keep the Z2M defaults the quirk
-    declares, so the bytes on the air are the ones Z2M sends.
+    declares, so the bytes on the air are the ones Z2M sends — except the
+    fail-safe of a duration plan, 0 as in Sonoff's own script (see the quirk's
+    PLAN_DURATION_FAIL_SAFE).
     """
     if (minutes is None) == (liters is None):
         raise ValueError("give exactly one of minutes or liters")
@@ -176,7 +180,10 @@ def build_plan(
         if not 1 <= int(minutes) <= 719:
             raise ValueError("minutes must be 1..719")
         return IrrigationPlan(
-            **common, mode=IrrigationMode.duration, total_duration=int(minutes)
+            **common,
+            mode=IrrigationMode.duration,
+            total_duration=int(minutes),
+            fail_safe=PLAN_DURATION_FAIL_SAFE,
         )
     if not 1 <= int(liters) <= 10000:
         raise ValueError("liters must be 1..10000")

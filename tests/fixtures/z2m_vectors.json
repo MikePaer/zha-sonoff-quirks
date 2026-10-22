@@ -252,6 +252,146 @@
       "payload_hex": "020103143272a6000200004d5800140005000301001e000a6ada3a08"
     },
     {
+      "name": "program_front_lawn",
+      "endpoint_name": "1",
+      "value": {
+        "plan_index": 0,
+        "enable_state": true,
+        "loop_type_mode": "weekdays",
+        "loop_type_week_days": {
+          "sunday": true,
+          "monday": true,
+          "tuesday": true,
+          "wednesday": true,
+          "thursday": true,
+          "friday": true,
+          "saturday": true
+        },
+        "enable_date": "2026-10-22",
+        "start_time": "05:00",
+        "irrigation_mode": "duration",
+        "irrigation_total_duration": 11,
+        "fail_safe": 0,
+        "irrigation_amount_unit": "liter",
+        "create_datetime": "2026-10-22T09:30:00-07:00"
+      },
+      "endpoint_id": 1,
+      "command": "irrigationPlanSettings",
+      "payload_hex": "0001037f326c0e800000004650000b0002000301001e00006ada3a08"
+    },
+    {
+      "name": "program_front_boxes",
+      "endpoint_name": "2",
+      "value": {
+        "plan_index": 0,
+        "enable_state": true,
+        "loop_type_mode": "weekdays",
+        "loop_type_week_days": {
+          "sunday": true,
+          "monday": true,
+          "tuesday": true,
+          "wednesday": true,
+          "thursday": true,
+          "friday": true,
+          "saturday": true
+        },
+        "enable_date": "2026-10-22",
+        "start_time": "05:12",
+        "irrigation_mode": "duration",
+        "irrigation_total_duration": 11,
+        "fail_safe": 0,
+        "irrigation_amount_unit": "liter",
+        "create_datetime": "2026-10-22T09:30:00-07:00"
+      },
+      "endpoint_id": 2,
+      "command": "irrigationPlanSettings",
+      "payload_hex": "0001037f326c0e800000004920000b0002000301001e00006ada3a08"
+    },
+    {
+      "name": "program_back_lawn",
+      "endpoint_name": "1",
+      "value": {
+        "plan_index": 0,
+        "enable_state": true,
+        "loop_type_mode": "weekdays",
+        "loop_type_week_days": {
+          "sunday": true,
+          "monday": true,
+          "tuesday": true,
+          "wednesday": true,
+          "thursday": true,
+          "friday": true,
+          "saturday": true
+        },
+        "enable_date": "2026-10-22",
+        "start_time": "05:24",
+        "irrigation_mode": "duration",
+        "irrigation_total_duration": 11,
+        "fail_safe": 0,
+        "irrigation_amount_unit": "liter",
+        "create_datetime": "2026-10-22T09:30:00-07:00"
+      },
+      "endpoint_id": 1,
+      "command": "irrigationPlanSettings",
+      "payload_hex": "0001037f326c0e800000004bf0000b0002000301001e00006ada3a08"
+    },
+    {
+      "name": "program_back_boxes",
+      "endpoint_name": "2",
+      "value": {
+        "plan_index": 0,
+        "enable_state": true,
+        "loop_type_mode": "weekdays",
+        "loop_type_week_days": {
+          "sunday": true,
+          "monday": true,
+          "tuesday": true,
+          "wednesday": true,
+          "thursday": true,
+          "friday": true,
+          "saturday": true
+        },
+        "enable_date": "2026-10-22",
+        "start_time": "05:36",
+        "irrigation_mode": "duration",
+        "irrigation_total_duration": 11,
+        "fail_safe": 0,
+        "irrigation_amount_unit": "liter",
+        "create_datetime": "2026-10-22T09:30:00-07:00"
+      },
+      "endpoint_id": 2,
+      "command": "irrigationPlanSettings",
+      "payload_hex": "0001037f326c0e800000004ec0000b0002000301001e00006ada3a08"
+    },
+    {
+      "name": "program_zone_disabled",
+      "endpoint_name": "2",
+      "value": {
+        "plan_index": 0,
+        "enable_state": false,
+        "loop_type_mode": "weekdays",
+        "loop_type_week_days": {
+          "sunday": true,
+          "monday": true,
+          "tuesday": true,
+          "wednesday": true,
+          "thursday": true,
+          "friday": true,
+          "saturday": true
+        },
+        "enable_date": "2026-10-22",
+        "start_time": "05:12",
+        "irrigation_mode": "duration",
+        "irrigation_total_duration": 11,
+        "fail_safe": 0,
+        "irrigation_amount_unit": "liter",
+        "create_datetime": "2026-10-22T09:30:00-07:00"
+      },
+      "endpoint_id": 2,
+      "command": "irrigationPlanSettings",
+      "payload_hex": "0000037f326c0e800000004920000b0002000301001e00006ada3a08"
+    },
+    {
       "name": "explicit_unused_fields",
       "endpoint_name": "1",
       "value": {

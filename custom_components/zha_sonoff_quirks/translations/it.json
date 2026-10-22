@@ -182,6 +182,14 @@
         "zones": {
           "name": "Zone",
           "description": "Elenco ordinato di zone: ognuna con lo switch della linea, minuti o un helper dei minuti, e facoltativamente attiva o un helper on/off."
+        },
+        "manual_cap_minutes": {
+          "name": "Limite manuale",
+          "description": "Minuti concessi a ogni apertura senza durata propria (pulsante, switch acceso, Home Assistant spento). Ripristinato su ogni valvola della sequenza dopo ogni irrigazione."
+        },
+        "manual_cap_entity": {
+          "name": "Helper limite manuale",
+          "description": "Un input_number con il limite manuale in minuti; cambiarlo riscrive l'impostazione manuale delle valvole."
         }
       }
     },

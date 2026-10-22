@@ -182,6 +182,14 @@
         "zones": {
           "name": "区域",
           "description": "有序的区域列表:每项包含线路开关、分钟或分钟辅助元素,以及可选的启用或开关辅助元素。"
+        },
+        "manual_cap_minutes": {
+          "name": "手动上限",
+          "description": "未指定时长的开启(按键、直接打开开关、Home Assistant 关闭时)所允许的分钟数。每次运行结束后在程序涉及的阀门上恢复。"
+        },
+        "manual_cap_entity": {
+          "name": "手动上限辅助元素",
+          "description": "保存手动上限分钟数的 input_number;修改它会重写阀门的手动默认设置。"
         }
       }
     },

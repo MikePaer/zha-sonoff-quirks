@@ -45,7 +45,7 @@ async def test_set_plan_confirmed_by_status(hass: HomeAssistant, manager, valves
     assert quirk.encode_irrigation_plan(plan)[:24].hex() == (
         "0001037f"
         + quirk._date_to_device(plan.enable_date).to_bytes(4, "big").hex()
-        + "0000004650000b0002000301001e000a"
+        + "0000004650000b0002000301001e0000"
     )
     slot = manager.slots(front.device_id, "1")[0]
     assert slot["status"] == STATUS_ON_VALVE
@@ -415,3 +415,84 @@ async def test_schedule_sensor_shows_next_run_and_plans(hass, manager, valves):
         }
     ]
     assert attrs["next_plan_index"] == 0
+
+
+# ── manual cap ──
+
+
+async def _program_with_cap(hass, valves, **cap):
+    await _helpers(hass)
+    await hass.services.async_call(
+        DOMAIN,
+        "set_program",
+        {
+            "start_entity": "input_datetime.irrigation_start",
+            "zones": _zones(valves),
+            **cap,
+        },
+        blocking=True,
+    )
+
+
+async def test_program_sets_the_manual_cap_on_both_valves(
+    hass, manager, valves, manual_writes
+):
+    await _program_with_cap(hass, valves, manual_cap_minutes=11)
+
+    assert sorted(manual_writes) == sorted(
+        [(valves[v].manual["irrigation_duration"], 11) for v in ("front", "back")]
+    )
+
+
+async def test_cap_restored_after_a_card_run(hass, manager, valves, manual_writes):
+    """The card's timed start leaves 15 min in 0x501D; the run end puts 11 back."""
+    await _program_with_cap(hass, valves, manual_cap_minutes=11)
+    front = valves["front"]
+    hass.states.async_set(front.manual["irrigation_duration"], "15")
+    manual_writes.clear()
+
+    hass.bus.async_fire(
+        "zha_sonoff_quirks_irrigation_completed", {"device_id": front.device_id}
+    )
+    await hass.async_block_till_done()
+
+    assert manual_writes == [(front.manual["irrigation_duration"], 11)]
+
+
+async def test_cap_waits_while_a_line_is_open(hass, manager, valves, manual_writes):
+    await _program_with_cap(hass, valves, manual_cap_minutes=11)
+    front = valves["front"]
+    hass.states.async_set(front.manual["irrigation_duration"], "15")
+    hass.states.async_set(front.switches["2"], "on", context=Context(user_id="x"))
+    manual_writes.clear()
+
+    await manager.async_enforce_manual_cap(front.device_id)
+
+    assert manual_writes == []
+
+
+async def test_cap_from_a_helper_and_mode_back_to_duration(
+    hass, manager, valves, manual_writes
+):
+    assert await async_setup_component(
+        hass,
+        "input_number",
+        {"input_number": {"cap": {"min": 1, "max": 60, "initial": 12}}},
+    )
+    front = valves["front"]
+    hass.states.async_set(front.manual["irrigation_mode"], "capacity")
+    await hass.services.async_call(
+        DOMAIN,
+        "set_program",
+        {
+            "start_time": "05:00",
+            "zones": [{"switch": front.switches["1"], "minutes": 11}],
+            "manual_cap_entity": "input_number.cap",
+        },
+        blocking=True,
+    )
+
+    assert manual_writes == [
+        (front.manual["irrigation_mode"], "duration"),
+        (front.manual["irrigation_duration"], 12),
+    ]

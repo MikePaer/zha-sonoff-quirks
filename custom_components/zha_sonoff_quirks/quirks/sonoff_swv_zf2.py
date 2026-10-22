@@ -48,9 +48,15 @@ sull'endpoint 2 (come Sonoff e Zigbee2MQTT):
 
 Il layout e' quello di Zigbee2MQTT (zigbee-herdsman-converters sonoff.ts),
 verificato byte per byte in tests/test_schedules_z2m_vectors.py. Lo script
-ZHA ufficiale Sonoff concorda sul layout ma non su due valori: unita' (Sonoff
-0=litro, Z2M e questo quirk 1=litro) e create_datetime (Sonoff epoca 2000,
-Z2M secondi Unix). Qui si segue Z2M.
+ZHA ufficiale Sonoff concorda sul layout ma non su tre valori: unita' (Sonoff
+0=litro, Z2M e questo quirk 1=litro), create_datetime (Sonoff epoca 2000,
+Z2M secondi Unix) e campi non usati dalla modalita' (Sonoff 0, Z2M default).
+Entrambi sono di Sonoff: lo script ZHA (2026-06-29, = PR zha-device-handlers
+#5110, mai unita) precede il firmware 1.0.9; il codice Z2M e' dell'account
+ufficiale SONOFF CUBE (CubeZ2mDeveloper) e dal 2026-07-15 gestisce il 1.0.9
+e tiene separate la codifica di 0x5021 (0=litro) e quella di 0x501D/piani
+(0=gallone US), che lo script confonde. Qui si segue Z2M, tranne il
+fail-safe dei programmi a durata (vedi PLAN_DURATION_FAIL_SAFE).
 
 I programmi scattano sull'orologio LOCALE della valvola, che lo chiede con una
 Read Attributes sul cluster Time (0x000A). La signature non ha il cluster
@@ -345,6 +351,12 @@ PLAN_DEFAULT_IRRIGATION_DURATION: Final = 2
 PLAN_DEFAULT_INTERVAL_DURATION: Final = 3
 PLAN_DEFAULT_AMOUNT: Final = 30
 PLAN_DEFAULT_FAIL_SAFE: Final = 10
+#: Fail-safe dei programmi a DURATA. Eccezione al default Z2M: lo script
+#: Sonoff manda 0 nei programmi a durata (il fail-safe e' un limite della
+#: modalita' a volume), e un default di 10 min dentro un programma da 11
+#: rischierebbe di chiuderlo prima, se il firmware lo applicasse. Z2M accetta
+#: 0 (range 0-719): i byte restano quelli che Z2M manda con fail_safe: 0.
+PLAN_DURATION_FAIL_SAFE: Final = 0
 
 
 class PlanLoopType(t.enum8):
@@ -695,6 +707,22 @@ class SWVZF2Cluster(CustomCluster):
             id=0x501F,
             type=IrrigationStatusPayload,
             zcl_type=foundation.DataTypeId.array,
+            manufacturer_code=None,
+        )
+        # Fine del rinvio pioggia (secondi locali dal 2000, 0 = nessuno).
+        # Dichiarato per poterlo rileggere dopo il comando 0x08.
+        rain_delay_end = ZCLAttributeDef(
+            id=0x5014,
+            type=t.uint32_t,
+            manufacturer_code=None,
+        )
+        # Unita' di misura dell'acqua (fw >= 1.0.9): 0 litro, 1 gallone US,
+        # 2 gallone imperiale. E' una codifica DIVERSA dal byte unita' di
+        # 0x501D e dei programmi (0 gallone US, 1 litro): vedi Z2M,
+        # SWVZNEUnifiedWaterFlowUnitByCode. Dichiarato solo per la lettura.
+        unit_of_water_flow = ZCLAttributeDef(
+            id=0x5021,
+            type=t.uint8_t,
             manufacturer_code=None,
         )
         # Impostazioni irrigazione manuale singola (array 12 byte)
