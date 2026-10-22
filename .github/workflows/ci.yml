@@ -16,7 +16,7 @@ jobs:
           python-version: "3.13"
 
       - name: Install dependencies
-        run: uv pip install --system -e ".[dev]"
+        run: uv pip install -e ".[dev]"
 
       - name: Verifica integrita' della quirk
         run: sha256sum -c checksums.sha256
@@ -41,7 +41,7 @@ jobs:
 
       - name: Install dependencies
         run: >-
-          uv pip install --system
+          uv pip install
           "pytest-homeassistant-custom-component==0.13.373"
           "zigpy==2.3.0" "zha-quirks==2.3.0"
 
