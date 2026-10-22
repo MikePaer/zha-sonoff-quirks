@@ -168,6 +168,78 @@ the channel switch. Entities are resolved from the registry by `unique_id`, so
 renaming entities does not break the services. Starting a channel that is
 already irrigating raises an error instead of silently retargeting the run.
 
+## On-valve schedules
+
+The valve can store up to **6 plans per line** and run them by itself — with
+Home Assistant (or the whole network) down. This integration writes them; HA
+is the only place they are set and keeps the desired copy.
+
+```yaml
+action: zha_sonoff_quirks.set_irrigation_plan
+target:
+  device_id: abc123...
+data:
+  channel: "1"
+  index: 1                    # slot 0-5; writing a used slot replaces it
+  start_time: "05:00"         # valve-local time
+  minutes: 11                 # or liters: 50 (+ fail_safe_minutes)
+  repeat: daily               # weekdays (+ weekdays: [mon, thu]), odd_days,
+                              # even_days, every_n_days (+ interval_days: 3)
+  enabled: true               # false keeps it stored but idle
+```
+
+Also `remove_irrigation_plan` (channel + index), `rain_delay` (`hours`, 0
+cancels; suspends every plan of the valve) and `resync_plans` (rewrites all 6
+slots of both lines so the valve matches HA). The valve has no command to list
+its plans, so HA cannot read them back: each slot carries a status instead —
+*pending*, *on_valve* (the valve acknowledged it, or reported the same
+settings) or *failed* (rejected, unanswered, or changed elsewhere — e.g. in
+the eWeLink app; resync fixes it).
+
+**A program** runs zones back to back from one start time — the usual
+"lawn, then boxes, then the backyard" morning. Each setting can be a literal or
+a helper entity, and from then on the integration watches those helpers and
+rewrites only the plans that change:
+
+```yaml
+action: zha_sonoff_quirks.set_program
+data:
+  start_entity: input_datetime.irrigation_start
+  gap_minutes: 1
+  slot: 0                     # the program owns this slot on every line it uses
+  zones:
+    - switch: switch.front_lawn
+      minutes_entity: input_number.front_lawn_minutes
+      enabled_entity: input_boolean.front_lawn_enabled
+    - switch: switch.front_boxes
+      minutes: 11
+      enabled_entity: input_boolean.front_boxes_enabled
+```
+
+A zone switched off is skipped (the later zones move up) and its plan stays on
+the valve with the enabled flag cleared; switching it back on restores it.
+`clear_program` stops the syncing and leaves the plans on the valves.
+
+Each line gets a **Next scheduled run** sensor: the next start computed from
+the plans (and the rain delay), with every slot and its status as attributes,
+plus when the valve last asked for the time.
+
+**The valve's clock.** Plans fire on the valve's own local clock, which it
+sets by reading the Zigbee Time cluster from the coordinator. ZHA used to drop
+that request (the signature has no Time output cluster); the quirk now answers
+it the way Zigbee2MQTT does, in HA's configured time zone, and logs one `INFO`
+line per answer (`custom_components.zha_sonoff_quirks.quirks.sonoff_swv_zf2`).
+
+**Run history** now says who started each run: `scheduled` (with
+`plan_index`, from the valve's session report), `integration` (these
+services), `manual` (any other HA action) or `physical` (no HA context: the
+valve's button).
+
+The plan bytes are Zigbee2MQTT's, checked byte for byte against its converter
+(`tests/test_schedules_z2m_vectors.py`); the official Sonoff ZHA script agrees
+on the layout but not on the unit and timestamp fields (see the quirk's
+docstring). Not yet verified on a valve: see *Status and known limits*.
+
 ## Naming the two lines
 
 The valve's outlets are silk-screened **A** and **B**, and the UI calls them
@@ -304,6 +376,8 @@ custom_components/zha_sonoff_quirks/
   __init__.py        # imports quirks/ at startup; serves the card; services
   config_flow.py     # one-click flow, no options
   services.py        # irrigation_by_liters / irrigation_by_minutes
+  schedules.py       # on-valve plans: store, writes, status, program, services
+  schedule_logic.py  # pure plan / program / next-run logic (no HA imports)
   services.yaml      # field selectors only; labels live in strings.json
   icons.json         # per-action icons, so the action picker stays readable
   strings.json       # source of truth; translations/ mirrors its key tree
@@ -311,7 +385,19 @@ custom_components/zha_sonoff_quirks/
     sonoff_swv_zf2.py  # THE quirk (single copy; integrity in checksums.sha256)
   www/
     sonoff-valve-card.js  # Lovelace card (auto-registered as a resource)
-tests/               # 98 offline tests, no device required
+tests/               # offline tests, no device and no Home Assistant required
+  z2m_oracle/        # regenerates fixtures/z2m_vectors.json from Zigbee2MQTT
+tests_ha/            # schedules against real Home Assistant (see below)
+```
+
+`tests_ha/` needs Home Assistant itself, so it has its own environment
+(Python 3.14; CI runs it as the `test-ha` job):
+
+```bash
+uv venv --python 3.14 .venv-ha
+uv pip install --python .venv-ha "pytest-homeassistant-custom-component==0.13.373" \
+  "zigpy==2.3.0" "zha-quirks==2.3.0"
+.venv-ha/bin/python -m pytest tests_ha -o asyncio_mode=auto
 ```
 
 Action names are deliberately **front-loaded with the unit** (*Liters🪣💧
@@ -340,6 +426,13 @@ closes when the volume target is reached, well before the fail-safe.
 
 **Not yet verified**: `duration` mode as a timed auto-close. The `0x501F` feed
 reports it correctly, but the actual closing time has not been measured.
+
+**On-valve schedules — not yet verified on a valve** (written and tested
+offline against Zigbee2MQTT's encoder and real Home Assistant): whether the
+valve accepts the Time reply and how often it asks; whether it answers a plan
+write with the 0x06 status, a Default Response or only the 0x09 report;
+whether `0x501F` for line B arrives on endpoint 2; odd/even/every-N-days
+semantics as assumed by the next-run sensor.
 
 The usage sensors were moved from `0x501B`/`0x501C` to `0x5006`/`0x5007`: the
 former reject `configure_reporting` and left the entities `unknown` forever.
