@@ -44,3 +44,9 @@ ignore = ["D203", "D213"]
 
 [tool.ruff.lint.isort]
 force-sort-within-sections = true
+
+# Non e' un pacchetto installabile: l'install editable serve solo per le
+# dipendenze dev. Senza questo, la discovery di setuptools trova piu' cartelle
+# top-level (custom_components, tests_ha) e rifiuta la build.
+[tool.setuptools]
+packages = []
