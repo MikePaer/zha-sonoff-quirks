@@ -26,6 +26,26 @@
         "1": "Linea A",
         "2": "Linea B"
       }
+    },
+    "repeat": {
+      "options": {
+        "daily": "Ogni giorno",
+        "weekdays": "Nei giorni scelti",
+        "odd_days": "Giorni dispari del mese",
+        "even_days": "Giorni pari del mese",
+        "every_n_days": "Ogni N giorni"
+      }
+    },
+    "weekday": {
+      "options": {
+        "mon": "Lunedì",
+        "tue": "Martedì",
+        "wed": "Mercoledì",
+        "thu": "Giovedì",
+        "fri": "Venerdì",
+        "sat": "Sabato",
+        "sun": "Domenica"
+      }
     }
   },
   "services": {
@@ -64,6 +84,110 @@
           "description": "Tempo massimo di apertura della linea, in minuti (0 disattiva la sicurezza). Se non impostato, la valvola mantiene il valore di sicurezza attuale."
         }
       }
+    },
+    "set_irrigation_plan": {
+      "name": "Programma📅 salva sulla valvola",
+      "description": "Scrive uno dei 6 programmi on-device di una linea. La valvola poi irriga da sola, anche con Home Assistant spento.",
+      "fields": {
+        "channel": {
+          "name": "Linea",
+          "description": "Quale delle due linee della valvola irriga il programma (A o B, come stampato sul dispositivo)."
+        },
+        "index": {
+          "name": "Slot",
+          "description": "Quale dei 6 slot (0-5) della linea scrivere. Uno slot già usato viene sostituito."
+        },
+        "enabled": {
+          "name": "Attivo",
+          "description": "Spento: il programma resta salvato sulla valvola ma non parte."
+        },
+        "repeat": {
+          "name": "Ripetizione",
+          "description": "In quali giorni parte il programma."
+        },
+        "weekdays": {
+          "name": "Giorni della settimana",
+          "description": "Giorni in cui partire, con ripetizione 'Nei giorni scelti'."
+        },
+        "interval_days": {
+          "name": "Ogni N giorni",
+          "description": "Giorni tra due partenze (1-30), con ripetizione 'Ogni N giorni'; contati dal primo salvataggio."
+        },
+        "start_time": {
+          "name": "Ora di partenza",
+          "description": "Ora locale in cui la valvola apre la linea."
+        },
+        "minutes": {
+          "name": "Minuti",
+          "description": "Durata in minuti. Indicare minuti oppure litri."
+        },
+        "liters": {
+          "name": "Litri",
+          "description": "Volume da erogare. Indicare minuti oppure litri."
+        },
+        "fail_safe_minutes": {
+          "name": "Timeout di sicurezza",
+          "description": "Per un programma a litri: tempo massimo di apertura, in minuti."
+        }
+      }
+    },
+    "remove_irrigation_plan": {
+      "name": "Elimina📅 un programma",
+      "description": "Rimuove un programma on-device di una linea dalla valvola e da Home Assistant.",
+      "fields": {
+        "channel": {
+          "name": "Linea",
+          "description": "Quale delle due linee della valvola (A o B, come stampato sul dispositivo)."
+        },
+        "index": {
+          "name": "Slot",
+          "description": "Quale dei 6 slot (0-5) della linea rimuovere."
+        }
+      }
+    },
+    "rain_delay": {
+      "name": "Rinvio pioggia☔",
+      "description": "Sospende tutti i programmi della valvola per le ore indicate; 0 annulla un rinvio in corso.",
+      "fields": {
+        "hours": {
+          "name": "Ore",
+          "description": "Per quanto saltare i programmi, in ore (0 annulla)."
+        }
+      }
+    },
+    "resync_plans": {
+      "name": "Risincronizza🔄 i programmi",
+      "description": "Riscrive tutti i 6 slot di entrambe le linee perché la valvola combaci con Home Assistant."
+    },
+    "set_program": {
+      "name": "Sequenza🔁 zone una dopo l'altra",
+      "description": "Salva un programma giornaliero: le zone partono una dopo l'altra da un'ora di inizio. Home Assistant riallinea i programmi delle valvole a ogni modifica.",
+      "fields": {
+        "start_time": {
+          "name": "Ora di partenza",
+          "description": "Ora in cui parte la prima zona. Indicarla oppure un helper."
+        },
+        "start_entity": {
+          "name": "Helper ora di partenza",
+          "description": "Un input_datetime con l'ora di partenza; cambiarlo riscrive i programmi."
+        },
+        "gap_minutes": {
+          "name": "Pausa",
+          "description": "Minuti tra la fine di una zona e l'inizio della successiva."
+        },
+        "slot": {
+          "name": "Slot",
+          "description": "Lo slot (0-5) usato dalla sequenza su ogni linea che irriga."
+        },
+        "zones": {
+          "name": "Zone",
+          "description": "Elenco ordinato di zone: ognuna con lo switch della linea, minuti o un helper dei minuti, e facoltativamente attiva o un helper on/off."
+        }
+      }
+    },
+    "clear_program": {
+      "name": "Dimentica🔁 la sequenza",
+      "description": "Smette di riallineare i programmi alle impostazioni della sequenza. I programmi restano sulle valvole."
     }
   }
 }

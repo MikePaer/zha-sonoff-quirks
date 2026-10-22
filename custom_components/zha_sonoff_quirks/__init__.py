@@ -24,8 +24,11 @@ On top of the quirks, the integration:
   bundle the "configure mode/target/fail-safe, then open the channel" entity
   sequence into a single call;
 - records every irrigation run (any origin: services, automations, physical
-  button, on-device auto-close) into a persistent per-channel run log
-  (`history.py`) surfaced by two sensors per channel (`sensor.py`);
+  button, on-device auto-close, on-valve plans) into a persistent per-channel
+  run log (`history.py`) surfaced by two sensors per channel (`sensor.py`);
+- writes and tracks the valve's on-device plans and the sequential program
+  built from dashboard helpers (`schedules.py`), with a next-run sensor per
+  channel;
 - serves the companion Lovelace card (`www/sonoff-valve-card.js`) via a
   static path and auto-registers it as a dashboard resource, so users don't
   have to add the resource manually.
@@ -52,6 +55,11 @@ from homeassistant.setup import async_when_setup
 from . import quirks  # noqa: F401
 from .const import DOMAIN, JSMODULES, PLATFORMS, SWV_MODELS, URL_BASE
 from .history import SwvRunLog
+from .schedules import (
+    SwvScheduleManager,
+    async_setup_schedule_services,
+    async_unload_schedule_services,
+)
 from .services import (
     async_refresh_service_descriptions,
     async_setup_services,
@@ -74,6 +82,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     run_log = SwvRunLog(hass)
     data["run_log"] = run_log
     await run_log.async_setup()
+    # On-valve plans: desired-state store, clock time zone, valve events. Set
+    # up before the platforms, which create one schedule sensor per line.
+    schedules = SwvScheduleManager(hass, run_log)
+    data["schedules"] = schedules
+    await schedules.async_setup()
+    async_setup_schedule_services(hass, schedules)
     try:
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     except Exception:
@@ -81,7 +95,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # run log's subscriptions live while HA's retry builds a second one —
         # two writers racing on the same store.
         data.pop("run_log", None)
+        data.pop("schedules", None)
         async_unload_services(hass)
+        async_unload_schedule_services(hass)
+        await schedules.async_unload()
         await run_log.async_unload()
         raise
     _async_schedule_quirk_check(hass)
@@ -116,6 +133,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # otherwise the still-registered sensors would point at a dead one.
         return False
     async_unload_services(hass)
+    async_unload_schedule_services(hass)
+    schedules: SwvScheduleManager | None = hass.data.get(DOMAIN, {}).pop(
+        "schedules", None
+    )
+    if schedules is not None:
+        await schedules.async_unload()
     run_log: SwvRunLog | None = hass.data.get(DOMAIN, {}).pop("run_log", None)
     if run_log is not None:
         await run_log.async_unload()

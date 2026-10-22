@@ -399,7 +399,7 @@ def _channel_labels(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, str] |
 
 
 async def _async_services_yaml(hass: HomeAssistant) -> dict[str, Any]:
-    """The parsed services.yaml, loaded once per HA session."""
+    """Return the parsed services.yaml, loaded once per HA session."""
     data = hass.data.setdefault(DOMAIN, {})
     if _DATA_SERVICES_YAML not in data:
         data[_DATA_SERVICES_YAML] = await hass.async_add_executor_job(

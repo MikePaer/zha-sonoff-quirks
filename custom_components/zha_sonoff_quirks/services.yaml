@@ -109,3 +109,225 @@ irrigation_by_minutes:
           max: 719
           unit_of_measurement: min
           mode: box
+
+# ── On-valve plans (schedules.py) ──
+# Same device target as the two irrigation services: the valve, and the line
+# as `channel`. Plans live on the valve; HA keeps the desired copy and a
+# status per slot (see the "Next scheduled run" sensors).
+set_irrigation_plan:
+  target:
+    device:
+      - manufacturer: SONOFF
+        model: SWV-ZF2
+      - manufacturer: SONOFF
+        model: SWV-ZF2U
+      - manufacturer: SONOFF
+        model: SWV-ZF2E
+    entity:
+      - integration: zha_sonoff_quirks
+        domain: [sensor]
+        device_class: [timestamp]
+  fields:
+    channel:
+      required: true
+      example: "1"
+      selector:
+        select:
+          options:
+            - "1"
+            - "2"
+          mode: list
+          translation_key: channel
+    index:
+      required: true
+      example: 1
+      selector:
+        number:
+          min: 0
+          max: 5
+          mode: box
+    enabled:
+      required: false
+      default: true
+      selector:
+        boolean:
+    repeat:
+      required: false
+      default: daily
+      selector:
+        select:
+          options:
+            - daily
+            - weekdays
+            - odd_days
+            - even_days
+            - every_n_days
+          translation_key: repeat
+    weekdays:
+      required: false
+      example: [mon, wed, fri]
+      selector:
+        select:
+          multiple: true
+          options:
+            - mon
+            - tue
+            - wed
+            - thu
+            - fri
+            - sat
+            - sun
+          translation_key: weekday
+    interval_days:
+      required: false
+      example: 3
+      selector:
+        number:
+          min: 1
+          max: 30
+          mode: box
+    start_time:
+      required: true
+      example: "05:00"
+      selector:
+        time:
+    minutes:
+      required: false
+      example: 11
+      selector:
+        number:
+          min: 1
+          max: 719
+          unit_of_measurement: min
+          mode: box
+    liters:
+      required: false
+      example: 50
+      selector:
+        number:
+          min: 1
+          max: 10000
+          unit_of_measurement: L
+          mode: box
+    fail_safe_minutes:
+      required: false
+      example: 30
+      selector:
+        number:
+          min: 0
+          max: 719
+          unit_of_measurement: min
+          mode: box
+
+remove_irrigation_plan:
+  target:
+    device:
+      - manufacturer: SONOFF
+        model: SWV-ZF2
+      - manufacturer: SONOFF
+        model: SWV-ZF2U
+      - manufacturer: SONOFF
+        model: SWV-ZF2E
+    entity:
+      - integration: zha_sonoff_quirks
+        domain: [sensor]
+        device_class: [timestamp]
+  fields:
+    channel:
+      required: true
+      example: "1"
+      selector:
+        select:
+          options:
+            - "1"
+            - "2"
+          mode: list
+          translation_key: channel
+    index:
+      required: true
+      example: 1
+      selector:
+        number:
+          min: 0
+          max: 5
+          mode: box
+
+rain_delay:
+  target:
+    device:
+      - manufacturer: SONOFF
+        model: SWV-ZF2
+      - manufacturer: SONOFF
+        model: SWV-ZF2U
+      - manufacturer: SONOFF
+        model: SWV-ZF2E
+    entity:
+      - integration: zha_sonoff_quirks
+        domain: [sensor]
+        device_class: [timestamp]
+  fields:
+    hours:
+      required: true
+      example: 24
+      selector:
+        number:
+          min: 0
+          max: 168
+          unit_of_measurement: h
+          mode: box
+
+resync_plans:
+  target:
+    device:
+      - manufacturer: SONOFF
+        model: SWV-ZF2
+      - manufacturer: SONOFF
+        model: SWV-ZF2U
+      - manufacturer: SONOFF
+        model: SWV-ZF2E
+    entity:
+      - integration: zha_sonoff_quirks
+        domain: [sensor]
+        device_class: [timestamp]
+
+set_program:
+  fields:
+    start_time:
+      required: false
+      example: "05:00"
+      selector:
+        time:
+    start_entity:
+      required: false
+      example: input_datetime.irrigation_start
+      selector:
+        entity:
+          filter:
+            - domain: [input_datetime]
+    gap_minutes:
+      required: false
+      default: 1
+      selector:
+        number:
+          min: 0
+          max: 60
+          unit_of_measurement: min
+          mode: box
+    slot:
+      required: false
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 5
+          mode: box
+    zones:
+      required: true
+      example: >-
+        [{"switch": "switch.front_lawn", "minutes_entity":
+        "input_number.front_lawn_minutes", "enabled_entity":
+        "input_boolean.front_lawn_enabled"}]
+      selector:
+        object:
+
+clear_program:

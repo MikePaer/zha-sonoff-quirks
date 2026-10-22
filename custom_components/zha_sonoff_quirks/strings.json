@@ -26,6 +26,26 @@
         "1": "Line A",
         "2": "Line B"
       }
+    },
+    "repeat": {
+      "options": {
+        "daily": "Every day",
+        "weekdays": "On chosen weekdays",
+        "odd_days": "Odd days of the month",
+        "even_days": "Even days of the month",
+        "every_n_days": "Every N days"
+      }
+    },
+    "weekday": {
+      "options": {
+        "mon": "Monday",
+        "tue": "Tuesday",
+        "wed": "Wednesday",
+        "thu": "Thursday",
+        "fri": "Friday",
+        "sat": "Saturday",
+        "sun": "Sunday"
+      }
     }
   },
   "services": {
@@ -64,6 +84,110 @@
           "description": "Maximum time the line may stay open, in minutes (0 disables the fail-safe). If not set, the valve keeps its current fail-safe setting."
         }
       }
+    },
+    "set_irrigation_plan": {
+      "name": "Plan📅 save a schedule on the valve",
+      "description": "Writes one of the valve's 6 on-device plans for a line. The valve then waters by itself, even with Home Assistant down.",
+      "fields": {
+        "channel": {
+          "name": "Line",
+          "description": "Which of the two valve lines the plan waters (A or B, as printed on the device)."
+        },
+        "index": {
+          "name": "Plan slot",
+          "description": "Which of the line's 6 plan slots (0-5) to write. Writing a used slot replaces its plan."
+        },
+        "enabled": {
+          "name": "Enabled",
+          "description": "Off keeps the plan stored on the valve without running it."
+        },
+        "repeat": {
+          "name": "Repeat",
+          "description": "Which days the plan runs."
+        },
+        "weekdays": {
+          "name": "Weekdays",
+          "description": "Days to run on, when Repeat is 'On chosen weekdays'."
+        },
+        "interval_days": {
+          "name": "Every N days",
+          "description": "Days between runs (1-30), when Repeat is 'Every N days'; counted from the day the plan is first saved."
+        },
+        "start_time": {
+          "name": "Start time",
+          "description": "Local time the valve opens the line."
+        },
+        "minutes": {
+          "name": "Minutes",
+          "description": "Run length in minutes. Give either minutes or liters."
+        },
+        "liters": {
+          "name": "Liters",
+          "description": "Volume to deliver. Give either minutes or liters."
+        },
+        "fail_safe_minutes": {
+          "name": "Fail-safe timeout",
+          "description": "For a liters plan: longest time the line may stay open, in minutes."
+        }
+      }
+    },
+    "remove_irrigation_plan": {
+      "name": "Delete📅 a plan from the valve",
+      "description": "Removes one of a line's on-device plans from the valve and from Home Assistant.",
+      "fields": {
+        "channel": {
+          "name": "Line",
+          "description": "Which of the two valve lines (A or B, as printed on the device)."
+        },
+        "index": {
+          "name": "Plan slot",
+          "description": "Which of the line's 6 plan slots (0-5) to remove."
+        }
+      }
+    },
+    "rain_delay": {
+      "name": "Rain delay☔ skip the plans",
+      "description": "Suspends all of the valve's plans for the given hours; 0 cancels a running delay.",
+      "fields": {
+        "hours": {
+          "name": "Hours",
+          "description": "How long to skip the plans, in hours (0 cancels)."
+        }
+      }
+    },
+    "resync_plans": {
+      "name": "Resync🔄 the valve's plans",
+      "description": "Rewrites all 6 plan slots of both lines so the valve matches Home Assistant."
+    },
+    "set_program": {
+      "name": "Program🔁 zones back to back",
+      "description": "Stores a daily program: zones run one after another from a start time. Home Assistant keeps the valves' plans in step whenever a setting changes.",
+      "fields": {
+        "start_time": {
+          "name": "Start time",
+          "description": "Time the first zone starts. Give this or a start time helper."
+        },
+        "start_entity": {
+          "name": "Start time helper",
+          "description": "An input_datetime holding the start time; changing it rewrites the plans."
+        },
+        "gap_minutes": {
+          "name": "Gap",
+          "description": "Minutes between one zone ending and the next starting."
+        },
+        "slot": {
+          "name": "Plan slot",
+          "description": "The plan slot (0-5) the program uses on every line it waters."
+        },
+        "zones": {
+          "name": "Zones",
+          "description": "Ordered list of zones: each has a line switch, minutes or a minutes helper, and optionally enabled or an on/off helper."
+        }
+      }
+    },
+    "clear_program": {
+      "name": "Forget🔁 the stored program",
+      "description": "Stops keeping the plans in step with the program settings. The plans stay on the valves."
     }
   }
 }

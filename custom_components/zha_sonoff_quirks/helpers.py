@@ -73,6 +73,19 @@ def resolve_entities(
     return found
 
 
+def all_devices(dev_reg: dr.DeviceRegistry) -> list[dr.DeviceEntry]:
+    """Every device entry, on any HA version.
+
+    HA 2026.10 deprecated using ``DeviceRegistry.devices`` as a mapping
+    (``.values()``; an error from 2027.9): iterating it now yields the
+    entries. Older releases iterate a dict of ids, looked up here.
+    """
+    return [
+        dev_reg.async_get(item) if isinstance(item, str) else item
+        for item in dev_reg.devices
+    ]
+
+
 @callback
 def find_swv_switches(hass: HomeAssistant) -> list[dict[str, str]]:
     """Every channel switch of every SWV-ZF2* device currently registered.
@@ -85,7 +98,7 @@ def find_swv_switches(hass: HomeAssistant) -> list[dict[str, str]]:
     dev_reg = dr.async_get(hass)
     ent_reg = er.async_get(hass)
     out: list[dict[str, str]] = []
-    for device in dev_reg.devices.values():
+    for device in all_devices(dev_reg):
         if device.model not in SWV_MODELS:
             continue
         for entry in er.async_entries_for_device(ent_reg, device.id):

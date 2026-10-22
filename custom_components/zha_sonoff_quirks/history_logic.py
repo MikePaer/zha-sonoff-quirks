@@ -88,9 +88,16 @@ def build_record(
     source: str,
     reason: str,
     channel: str,
+    plan_index: int | None = None,
 ) -> dict[str, Any]:
-    """Build the run record persisted in the store and shown by the card."""
-    return {
+    """Build the run record persisted in the store and shown by the card.
+
+    ``source`` is ``integration`` (this integration's services), ``manual``
+    (any other HA-initiated start: UI, automation, script), ``physical`` (no
+    HA context: the valve's button) or ``scheduled`` (an on-valve plan, whose
+    slot is then in ``plan_index``).
+    """
+    record = {
         "start": start_iso,
         "end": end_iso,
         "duration_s": int(round(duration_s)),
@@ -101,6 +108,20 @@ def build_record(
         "reason": reason,
         "channel": channel,
     }
+    if plan_index is not None:
+        record["plan_index"] = plan_index
+    return record
+
+
+def source_from_context(user_id: str | None, parent_id: str | None) -> str:
+    """Origin of a switch's off->on transition with no pending attribution.
+
+    ZHA writes the state in the calling service's context, so an HA-initiated
+    start (UI, automation, script) carries a user or a parent; a start the
+    valve reports on its own — button press, or an on-valve plan before its
+    0x501F report re-tags it as ``scheduled`` — carries neither.
+    """
+    return "manual" if (user_id or parent_id) else "physical"
 
 
 def should_discard(
@@ -108,9 +129,11 @@ def should_discard(
 ) -> bool:
     """Whether a finished run is a glitch to drop rather than record.
 
-    Only sub-``min_run_s`` *manual* toggles are discarded (a physical
-    double-tap or a Zigbee blip). Integration-driven runs are always kept, as
-    are forced finalizations (shutdown recovery, superseded runs): those paths
-    record deliberately.
+    Only sub-``min_run_s`` *manual* or *physical* toggles are discarded (a
+    physical double-tap or a Zigbee blip). Integration-driven and scheduled
+    runs are always kept, as are forced finalizations (shutdown recovery,
+    superseded runs): those paths record deliberately.
     """
-    return not forced and source == "manual" and duration_s < min_run_s
+    return (
+        not forced and source in ("manual", "physical") and duration_s < min_run_s
+    )

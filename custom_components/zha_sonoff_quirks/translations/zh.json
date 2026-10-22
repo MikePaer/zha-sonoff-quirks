@@ -26,6 +26,26 @@
         "1": "线路 A",
         "2": "线路 B"
       }
+    },
+    "repeat": {
+      "options": {
+        "daily": "每天",
+        "weekdays": "每周指定日",
+        "odd_days": "每月单数日",
+        "even_days": "每月双数日",
+        "every_n_days": "每 N 天"
+      }
+    },
+    "weekday": {
+      "options": {
+        "mon": "星期一",
+        "tue": "星期二",
+        "wed": "星期三",
+        "thu": "星期四",
+        "fri": "星期五",
+        "sat": "星期六",
+        "sun": "星期日"
+      }
     }
   },
   "services": {
@@ -64,6 +84,110 @@
           "description": "线路允许保持打开的最长时间，单位为分钟（0 表示禁用安全保护）。若不设置，水阀保留当前的安全超时设置。"
         }
       }
+    },
+    "set_irrigation_plan": {
+      "name": "📅保存阀门上的灌溉计划",
+      "description": "写入线路在阀门上的 6 个计划之一。之后阀门会自行灌溉,即使 Home Assistant 已关闭。",
+      "fields": {
+        "channel": {
+          "name": "线路",
+          "description": "计划灌溉阀门的哪条线路(A 或 B,与设备上的标识一致)。"
+        },
+        "index": {
+          "name": "计划槽位",
+          "description": "写入该线路 6 个槽位(0-5)中的哪一个。已使用的槽位会被替换。"
+        },
+        "enabled": {
+          "name": "启用",
+          "description": "关闭时计划仍保存在阀门上,但不会运行。"
+        },
+        "repeat": {
+          "name": "重复",
+          "description": "计划在哪些日子运行。"
+        },
+        "weekdays": {
+          "name": "星期",
+          "description": "重复为“每周指定日”时运行的日子。"
+        },
+        "interval_days": {
+          "name": "每 N 天",
+          "description": "重复为“每 N 天”时两次运行间隔的天数(1-30),从首次保存之日起计算。"
+        },
+        "start_time": {
+          "name": "开始时间",
+          "description": "阀门打开线路的本地时间。"
+        },
+        "minutes": {
+          "name": "分钟",
+          "description": "运行时长(分钟)。分钟与升二选一。"
+        },
+        "liters": {
+          "name": "升",
+          "description": "出水量。分钟与升二选一。"
+        },
+        "fail_safe_minutes": {
+          "name": "安全超时",
+          "description": "按升计划时线路最长开启时间(分钟)。"
+        }
+      }
+    },
+    "remove_irrigation_plan": {
+      "name": "🗑️删除阀门上的计划",
+      "description": "从阀门和 Home Assistant 中删除线路的一个计划。",
+      "fields": {
+        "channel": {
+          "name": "线路",
+          "description": "阀门的哪条线路(A 或 B,与设备上的标识一致)。"
+        },
+        "index": {
+          "name": "计划槽位",
+          "description": "删除该线路 6 个槽位(0-5)中的哪一个。"
+        }
+      }
+    },
+    "rain_delay": {
+      "name": "☔雨天延迟,暂停计划",
+      "description": "在指定小时内暂停阀门的所有计划;0 表示取消当前延迟。",
+      "fields": {
+        "hours": {
+          "name": "小时",
+          "description": "暂停计划的时长(小时,0 表示取消)。"
+        }
+      }
+    },
+    "resync_plans": {
+      "name": "🔄重新同步阀门计划",
+      "description": "重写两条线路全部 6 个槽位,使阀门与 Home Assistant 一致。"
+    },
+    "set_program": {
+      "name": "🔁按顺序轮灌各区域",
+      "description": "保存每日程序:各区域从开始时间起依次运行。任何设置变化时 Home Assistant 都会同步阀门计划。",
+      "fields": {
+        "start_time": {
+          "name": "开始时间",
+          "description": "第一个区域的开始时间。填写此项或开始时间辅助元素。"
+        },
+        "start_entity": {
+          "name": "开始时间辅助元素",
+          "description": "保存开始时间的 input_datetime;修改它会重写计划。"
+        },
+        "gap_minutes": {
+          "name": "间隔",
+          "description": "一个区域结束到下一个区域开始之间的分钟数。"
+        },
+        "slot": {
+          "name": "计划槽位",
+          "description": "程序在每条线路上使用的槽位(0-5)。"
+        },
+        "zones": {
+          "name": "区域",
+          "description": "有序的区域列表:每项包含线路开关、分钟或分钟辅助元素,以及可选的启用或开关辅助元素。"
+        }
+      }
+    },
+    "clear_program": {
+      "name": "✖️忘记已保存的程序",
+      "description": "不再让计划跟随程序设置。计划仍保留在阀门上。"
     }
   }
 }
