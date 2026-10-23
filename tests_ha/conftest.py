@@ -62,10 +62,11 @@ class FakeEndpoint:
             self.valve.emit(self.endpoint_id, "plan_report", plan=plan)
         return self.valve.set_status
 
-    async def remove_irrigation_plan(self, index: int) -> None:
+    async def remove_irrigation_plan(self, index: int) -> int | None:
         self.valve.sent.append(("remove", self.endpoint_id, index))
         if self.valve.report_removed:
             self.valve.emit(self.endpoint_id, "plan_removed", index=index)
+        return self.valve.remove_status
 
     async def set_rain_delay(self, end) -> None:
         self.valve.sent.append(("rain_delay", self.endpoint_id, end))
@@ -80,7 +81,10 @@ class FakeValve:
     switches: dict[str, str]
     set_status: int | None = 0
     report_after_set: bool = False
-    report_removed: bool = True
+    report_removed: bool = False
+    #: Default Response status to a remove: what the real valve sends for a
+    #: Zigbee removal (no 0x0A report for those, observed 2026-10-22).
+    remove_status: int | None = 0
     manual: dict[str, str] = field(default_factory=dict)
     sent: list[tuple[str, int, Any]] = field(default_factory=list)
 
