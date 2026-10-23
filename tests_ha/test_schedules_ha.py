@@ -121,8 +121,9 @@ async def test_remove_waits_for_removed_report(hass, manager, valves):
 
 
 async def test_unconfirmed_remove_stays_for_resync(hass, manager, valves):
+    """No Default Response status and no 0x0A report: not confirmed."""
     front = valves["front"]
-    front.report_removed = False
+    front.remove_status = None
 
     with pytest.raises(HomeAssistantError):
         await hass.services.async_call(
@@ -496,3 +497,89 @@ async def test_cap_from_a_helper_and_mode_back_to_duration(
         (front.manual["irrigation_mode"], "duration"),
         (front.manual["irrigation_duration"], 12),
     ]
+
+
+# ── fixes after Phase 5 (2026-10-22) ──
+
+
+async def test_remove_confirmed_by_default_response_alone(hass, manager, valves):
+    """The real valve sends no 0x0A for a Zigbee remove; status 0 is enough."""
+    front = valves["front"]
+    await _set_plan(hass, front, index=5, start_time="17:35", minutes=1)
+
+    await hass.services.async_call(
+        DOMAIN,
+        "remove_irrigation_plan",
+        {"device_id": front.device_id, "channel": "1", "index": 5},
+        blocking=True,
+    )
+
+    assert manager.slots(front.device_id, "1") == {}
+
+
+async def test_remove_rejected_status_is_failed(hass, manager, valves):
+    front = valves["front"]
+    front.remove_status = 0x85
+
+    with pytest.raises(HomeAssistantError):
+        await hass.services.async_call(
+            DOMAIN,
+            "remove_irrigation_plan",
+            {"device_id": front.device_id, "channel": "1", "index": 2},
+            blocking=True,
+        )
+
+    assert "status 133" in manager.slots(front.device_id, "1")[2]["error"]
+
+
+async def test_automation_switch_on_is_manual_not_physical(hass, manager, valves):
+    """ZHA's state write has no HA context; the service call marks it manual."""
+    from homeassistant.const import EVENT_CALL_SERVICE
+
+    switch = valves["front"].switches["1"]
+    run_log = hass.data[DOMAIN]["run_log"]
+
+    hass.bus.async_fire(
+        EVENT_CALL_SERVICE,
+        {
+            "domain": "switch",
+            "service": "turn_on",
+            "service_data": {"entity_id": [switch]},
+        },
+    )
+    await hass.async_block_till_done()
+    hass.states.async_set(switch, "on", context=Context())
+    await hass.async_block_till_done()
+
+    assert run_log._data["channels"][switch]["in_flight"]["source"] == "manual"
+
+
+async def test_button_press_is_still_physical(hass, manager, valves):
+    switch = valves["front"].switches["2"]
+    run_log = hass.data[DOMAIN]["run_log"]
+
+    hass.states.async_set(switch, "on", context=Context())
+    await hass.async_block_till_done()
+
+    assert run_log._data["channels"][switch]["in_flight"]["source"] == "physical"
+
+
+async def test_valve_next_session_is_shown(hass, manager, valves):
+    from homeassistant.helpers import device_registry as dr
+
+    from custom_components.zha_sonoff_quirks.sensor import SwvScheduleSensor
+
+    front = valves["front"]
+    tz = quirk.local_timezone()
+    start = quirk.device_local_seconds(
+        dt_util.now().replace(hour=17, minute=35, second=0, microsecond=0), tz
+    )
+
+    front.emit(1, "next_session", plan_index=5, start=start)
+
+    device = dr.async_get(hass).async_get(front.device_id)
+    sensor = SwvScheduleSensor(device, front.switches["1"], "1", manager)
+    sensor.hass = hass
+    nxt = sensor.extra_state_attributes["valve_next_session"]
+    assert nxt["plan_index"] == 5
+    assert nxt["start"].startswith(dt_util.now().date().isoformat() + "T17:35:00")

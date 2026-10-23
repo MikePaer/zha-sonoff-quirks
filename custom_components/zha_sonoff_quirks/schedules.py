@@ -280,6 +280,15 @@ class SwvScheduleManager:
         until = dt_util.parse_datetime(value) if value else None
         return until if until and until > dt_util.utcnow() else None
 
+    def valve_next_session(self, device_id: str, channel: str) -> dict | None:
+        """Return what the valve last announced it runs next on a line."""
+        return (
+            self._data["devices"]
+            .get(device_id, {})
+            .get("next_session", {})
+            .get(channel)
+        )
+
     def last_time_sync(self, device_id: str) -> dict[str, Any] | None:
         """When the valve last asked for the time, and what it was told."""
         return self._data["devices"].get(device_id, {}).get("time_sync")
@@ -419,7 +428,9 @@ class SwvScheduleManager:
         )
         await asyncio.sleep(0)
         try:
-            await self._cluster(device_id, endpoint_id).remove_irrigation_plan(index)
+            status_code = await self._cluster(
+                device_id, endpoint_id
+            ).remove_irrigation_plan(index)
         except Exception as err:  # noqa: BLE001 - surfaced as the slot status
             waiter.cancel()
             self._set_slot(
@@ -431,16 +442,26 @@ class SwvScheduleManager:
                 error=f"remove failed: {err}",
             )
             return STATUS_FAILED
-        if await waiter is None:
-            # The 0x0A report is the only confirmation a remove gets. Keep the
-            # slot as a failed "nothing" so Resync tries again.
+        # The Default Response is the confirmation a Zigbee remove gets; the
+        # 0x0A report seems reserved for removals made on the device or in
+        # the app (none arrived on 2026-10-22), so it only backs up a missing
+        # status. Keep an unconfirmed slot as a failed "nothing" so Resync
+        # tries again.
+        if status_code is None:
+            event = await waiter
+            confirmed, error = event is not None, "removal not confirmed by the valve"
+        else:
+            waiter.cancel()
+            confirmed = status_code == 0
+            error = f"valve rejected the removal (status {status_code})"
+        if not confirmed:
             self._set_slot(
                 device_id,
                 channel,
                 index,
                 plan=None,
                 status=STATUS_FAILED,
-                error="removal not confirmed by the valve",
+                error=error,
             )
             return STATUS_FAILED
         self._drop_slot(device_id, channel, index)
@@ -465,10 +486,14 @@ class SwvScheduleManager:
                         # Slot HA never used: clear it, but do not wait half a
                         # minute for a report an empty slot may never send.
                         try:
-                            await self._cluster(
+                            code = await self._cluster(
                                 device_id, int(channel)
                             ).remove_irrigation_plan(index)
-                            status = STATUS_ON_VALVE
+                            status = (
+                                STATUS_FAILED
+                                if code not in (0, None)
+                                else STATUS_ON_VALVE
+                            )
                         except Exception as err:  # noqa: BLE001
                             _LOGGER.warning(
                                 "Resync: clearing %s/%s failed: %s", channel, index, err
@@ -525,6 +550,20 @@ class SwvScheduleManager:
                 "local_time": event["values"]["local_time"],
                 "time_zone": event["values"]["time_zone"],
                 "dst_shift": event["values"]["dst_shift"],
+            }
+            self._save()
+            async_dispatcher_send(self.hass, schedule_signal(device_id))
+        elif kind == "next_session":
+            # The valve's own view of what it runs next on this line: the
+            # closest thing to reading its plans back.
+            device = self._data["devices"].setdefault(device_id, {"lines": {}})
+            start = quirk.device_local_to_datetime(
+                event["start"], quirk.local_timezone()
+            )
+            device.setdefault("next_session", {})[channel] = {
+                "plan_index": event["plan_index"],
+                "start": start.isoformat(),
+                "reported": dt_util.utcnow().isoformat(),
             }
             self._save()
             async_dispatcher_send(self.hass, schedule_signal(device_id))

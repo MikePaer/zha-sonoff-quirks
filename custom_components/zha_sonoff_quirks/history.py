@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from homeassistant.const import EVENT_CALL_SERVICE
 from homeassistant.core import Context, Event, HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_send
@@ -89,6 +90,7 @@ class SwvRunLog:
         self._switch_info: dict[str, dict[str, str]] = {}
         self._unsubs: dict[str, callable] = {}
         self._reg_unsub: callable | None = None
+        self._call_unsub: callable | None = None
         # switch -> asyncio.Task awaiting the post-close grace before finalizing.
         self._finalize_tasks: dict[str, asyncio.Task] = {}
         # switch -> ISO of the REAL off-transition, captured when the grace
@@ -108,6 +110,9 @@ class SwvRunLog:
         self._reg_unsub = self.hass.bus.async_listen(
             er.EVENT_ENTITY_REGISTRY_UPDATED, self._on_registry_updated
         )
+        self._call_unsub = self.hass.bus.async_listen(
+            EVENT_CALL_SERVICE, self._on_call_service
+        )
         await self._recover_in_flight()
 
     async def async_unload(self) -> None:
@@ -118,6 +123,9 @@ class SwvRunLog:
         if self._reg_unsub is not None:
             self._reg_unsub()
             self._reg_unsub = None
+        if self._call_unsub is not None:
+            self._call_unsub()
+            self._call_unsub = None
         for switch in list(self._finalize_tasks):
             self._cancel_finalize(switch)
         self._off_at.clear()
@@ -149,6 +157,33 @@ class SwvRunLog:
         if not str(data.get("entity_id", "")).startswith("switch."):
             return
         self._refresh_subscriptions()
+
+    @callback
+    def _on_call_service(self, event: Event) -> None:
+        """Attribute HA's own switch commands as ``manual`` runs.
+
+        ZHA writes a valve switch's state from the valve's own report, which
+        carries no HA context, so an automation's ``switch.turn_on`` looked
+        exactly like the button ("physical", 2026-10-22). The service call
+        itself is the reliable signal: it leaves a short-lived pending
+        attribution, which the integration's own services (set just before
+        their own call) take precedence over.
+        """
+        data = event.data
+        if data.get("domain") not in ("switch", "homeassistant"):
+            return
+        if data.get("service") not in ("turn_on", "toggle"):
+            return
+        entity_ids = (data.get("service_data") or {}).get("entity_id") or []
+        if isinstance(entity_ids, str):
+            entity_ids = [e.strip() for e in entity_ids.split(",")]
+        tracked = [e for e in entity_ids if e in self._switch_info]
+        if not tracked:
+            return
+        pending = self.hass.data.setdefault(DOMAIN, {}).setdefault("pending", {})
+        now = dt_util.utcnow().timestamp()
+        for switch in tracked:
+            pending.setdefault(switch, {"source": "manual", "ts": now})
 
     # ── state observation ──
     @callback

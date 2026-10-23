@@ -22,6 +22,7 @@ from sonoff_swv_zf2 import (
     CMD_RAIN_DELAY,
     EVERY_DAY_MASK,
     IrrigationPlan,
+    IrrigationSessionState,
     PlanLoopType,
     SWVZF2TimeCluster,
     decode_session_source,
@@ -267,7 +268,7 @@ async def test_timeout_means_no_status(quirked_device):
 
 @pytest.mark.asyncio
 async def test_remove_and_rain_delay_frames(quirked_device, la_timezone):
-    """0x07 con l'indice, 0x08 con la fine del rinvio; nessuna risposta attesa."""
+    """0x07 con l'indice (Default Response atteso), 0x08 con la fine del rinvio."""
     ep1 = quirked_device.endpoints[1]
     end = datetime(2026, 10, 23, 9, 0, tzinfo=ZoneInfo("America/Los_Angeles"))
 
@@ -281,7 +282,7 @@ async def test_remove_and_rain_delay_frames(quirked_device, la_timezone):
         for c in request.await_args_list
     ]
     assert [(h.command_id, p.hex(), r) for (h, p), r in sent] == [
-        (CMD_PLAN_REMOVE, "03", False),
+        (CMD_PLAN_REMOVE, "03", True),
         # Vettore Z2M America/Los_Angeles 2026-10-23T09:00:00-07:00.
         (CMD_RAIN_DELAY, "326dde90", False),
         (CMD_RAIN_DELAY, "00000000", False),
@@ -438,3 +439,69 @@ def test_broken_listener_does_not_break_zigpy(quirked_device, events):
         remove()
 
     assert len(events) == 1
+
+
+# --------------------------------------------------------------------------- #
+# Correzioni dopo la Fase 5 (2026-10-22)
+# --------------------------------------------------------------------------- #
+
+#: Frame catturati il 2026-10-22: fine della corsa da programma #5 (17 L) e,
+#: 9 ms dopo, l'annuncio "standby" del programma #5 del giorno seguente.
+END_OF_SCHEDULED_RUN = [
+    1,
+    5,
+    0,
+    0,
+    50,
+    108,
+    255,
+    0,
+    50,
+    109,
+    0,
+    60,
+    50,
+    109,
+    0,
+    63,
+    1,
+    0,
+    30,
+    0,
+    17,
+]
+STANDBY_NEXT_DAY = [3, 5, 0, 0, 50, 110, 87, 68, 50, 110, 87, 128, 1, 0, 30]
+
+
+def test_standby_frame_keeps_the_finished_runs_volume(
+    quirked_device, progress_cluster, events
+):
+    """Lo standby descrive la corsa SUCCESSIVA: non azzera il volume."""
+    cluster = quirked_device.endpoints[1].swvzf2_cluster
+    attr = cluster.AttributeDefs.irrigation_status.id
+
+    cluster._update_attribute(attr, END_OF_SCHEDULED_RUN)
+    cluster._update_attribute(attr, STANDBY_NEXT_DAY)
+
+    assert progress_cluster.get("session_volume") == 17
+    assert progress_cluster.get("session_state") == IrrigationSessionState.finished
+    assert [e["type"] for e in events] == ["session", "next_session"]
+    nxt = events[1]
+    assert nxt["plan_index"] == 5
+    assert device_local_to_datetime(nxt["start"], ZoneInfo("UTC")).replace(
+        tzinfo=None
+    ) == datetime(2026, 10, 23, 17, 35)
+
+
+@pytest.mark.asyncio
+async def test_remove_returns_the_default_response_status(quirked_device):
+    """La conferma di una cancellazione via Zigbee e' il Default Response."""
+    cluster = quirked_device.endpoints[1].swvzf2_cluster
+    default_rsp = foundation.GENERAL_COMMANDS[
+        foundation.GeneralCommand.Default_Response
+    ].schema(command_id=CMD_PLAN_REMOVE, status=foundation.Status.SUCCESS)
+
+    with mock.patch.object(
+        cluster.endpoint, "request", mock.AsyncMock(return_value=default_rsp)
+    ):
+        assert await cluster.remove_irrigation_plan(5) == 0

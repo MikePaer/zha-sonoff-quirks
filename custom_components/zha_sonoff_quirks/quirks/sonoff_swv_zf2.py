@@ -233,6 +233,10 @@ class IrrigationSessionState(t.enum8):
     preamble = 0x00
     finished = 0x01
     running = 0x02
+    #: Prossima sessione programmata in attesa (Z2M: "standby"). Arriva subito
+    #: dopo la fine di una corsa quando c'e' un programma attivo, e descrive la
+    #: corsa SUCCESSIVA, non quella appena finita (vedi _sync_progress).
+    standby = 0x03
 
 
 class IrrigationStatusPayload(t.LVList, item_type=t.uint8_t, length_type=t.uint16_t):
@@ -811,8 +815,21 @@ class SWVZF2Cluster(CustomCluster):
         if decoded is None:
             self.warning("Ignoring unrecognised irrigation_status payload %r", value)
             return
-        local.update_from_irrigation_status(decoded)
         source = decode_session_source(value)
+        if source is not None and source["session_state"] == IrrigationSessionState.standby:
+            # Annuncio del prossimo programma (osservato il 2026-10-22, 9 ms
+            # dopo il report finale): passarlo al cluster locale azzererebbe
+            # il volume della corsa appena chiusa, che lo storico legge dopo
+            # 12 s, e lo farebbe sembrare l'avvio di una sessione programmata.
+            raw = value.value if isinstance(value, foundation.Array) else value
+            _notify(
+                self,
+                "next_session",
+                plan_index=source["session_plan_index"],
+                start=_u32_be([int(b) for b in raw], 4),
+            )
+            return
+        local.update_from_irrigation_status(decoded)
         if source is not None:
             # Endpoint del report = linea, per attribuire la sessione nello
             # storico (Programma #n o manuale).
@@ -862,8 +879,14 @@ class SWVZF2Cluster(CustomCluster):
             CMD_PLAN_SET, expect_reply=True, payload=RawPayload(payload)
         )
 
-    async def remove_irrigation_plan(self, index: int) -> None:
-        """Cancella un programma; la conferma arriva come report 0x0A."""
+    async def remove_irrigation_plan(self, index: int) -> int | None:
+        """Cancella un programma; ritorna lo status del Default Response.
+
+        Il report 0x0A non arriva per le cancellazioni via Zigbee (Z2M lo
+        chiama "local irrigation plan removed report": e' per quelle fatte
+        sul dispositivo/app; verificato il 2026-10-22, nessun 0x0A in 30 s).
+        La conferma e' quindi il Default Response, che si chiede e si attende.
+        """
         index = _ranged(index, 0, PLAN_SLOTS - 1, "index")
         _LOGGER.info(
             "SWV-ZF2 %s ep%s: removing plan %s",
@@ -871,9 +894,8 @@ class SWVZF2Cluster(CustomCluster):
             self.endpoint.endpoint_id,
             index,
         )
-        # Come Z2M: disableDefaultResponse, nessuna risposta attesa.
-        await self._send_schedule_command(
-            CMD_PLAN_REMOVE, expect_reply=False, plan_index=t.uint8_t(index)
+        return await self._send_schedule_command(
+            CMD_PLAN_REMOVE, expect_reply=True, plan_index=t.uint8_t(index)
         )
 
     async def set_rain_delay(self, end: datetime | None) -> None:

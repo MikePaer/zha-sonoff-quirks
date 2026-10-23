@@ -103,9 +103,15 @@ async def async_setup_entry(
         await asyncio.sleep(10)
         ent_reg = er.async_get(hass)
         for device in all_devices(dev_reg):
-            if entry.entry_id not in device.config_entries:
-                continue
-            if len(device.config_entries) > 1:
+            # HA 2026.8+: one owning entry per device (config_entry_id);
+            # the config_entries set is deprecated (an error from 2027.10).
+            owner = getattr(device, "config_entry_id", None)
+            if owner is not None:
+                if owner != entry.entry_id:
+                    continue
+            elif entry.entry_id not in device.config_entries or (
+                len(device.config_entries) > 1
+            ):
                 continue
             if er.async_entries_for_device(
                 ent_reg, device.id, include_disabled_entities=True
@@ -318,4 +324,7 @@ class SwvScheduleSensor(SwvAttachedEntity, SensorEntity):
             "rain_delay_until": rain.isoformat() if rain else None,
             "last_time_sync": sync.get("at"),
             "time_sync_count": sync.get("count", 0),
+            "valve_next_session": self._schedules.valve_next_session(
+                self._device_id, self._channel
+            ),
         }
