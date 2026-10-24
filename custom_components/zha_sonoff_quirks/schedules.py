@@ -22,6 +22,14 @@ which is also how turning a zone toggle off disables its plan on the valve.
 Valve events reach this module through the quirk's listener hook
 (``add_schedule_listener``), not ZHA: ZHA has no cluster handler for 0xFC11
 commands. Commands go out through the zigpy device ZHA already manages.
+
+Lost "closed" reports: the valve closes a line on its own timer, but the
+report that tells HA can get lost (seen 2026-10-22 and 2026-10-24), leaving
+the switch "on" in HA. While a line runs the valve reports its session every
+~6 s, so a line HA shows open that has been silent for
+``STALE_LINE_SILENCE_S`` is read back from the valve (on/off of its
+endpoint); ZHA updates the switch from the answer. A read never commands
+the valve, it only corrects HA's view.
 """
 
 from __future__ import annotations
@@ -30,6 +38,7 @@ import asyncio
 from collections.abc import Callable
 from datetime import datetime, timedelta
 import logging
+import time
 from typing import Any
 
 from homeassistant.const import EVENT_CORE_CONFIG_UPDATE, EVENT_HOMEASSISTANT_STARTED
@@ -47,6 +56,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import (
     async_call_later,
     async_track_state_change_event,
+    async_track_time_interval,
 )
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
@@ -103,6 +113,13 @@ SCHEDULE_SERVICES = (
     SERVICE_CLEAR_PROGRAM,
 )
 
+#: A line HA shows open with no session report from the valve for this long
+#: is read back (the valve reports a running session every ~6 s).
+STALE_LINE_SILENCE_S = 30.0
+#: Gap between read-backs of the same line while it stays silent.
+STALE_LINE_READ_INTERVAL_S = 60.0
+STALE_LINE_CHECK_EVERY = timedelta(seconds=15)
+
 _BAD_STATES = ("unknown", "unavailable", "none", "")
 
 
@@ -128,6 +145,10 @@ class SwvScheduleManager:
         self._unsubs: list[Callable[[], None]] = []
         self._program_unsub: Callable[[], None] | None = None
         self._program_debouncer: Debouncer | None = None
+        # (ieee, endpoint_id) -> monotonic time of the last session report /
+        # of the last read-back, for the lost-"closed"-report check.
+        self._line_heard: dict[tuple[str, int], float] = {}
+        self._line_read: dict[tuple[str, int], float] = {}
 
     # ── lifecycle ──
     async def async_setup(self) -> None:
@@ -163,6 +184,11 @@ class SwvScheduleManager:
             function=self.async_apply_program,
         )
         self._watch_program()
+        self._unsubs.append(
+            async_track_time_interval(
+                self.hass, self._check_stale_lines, STALE_LINE_CHECK_EVERY
+            )
+        )
 
         @callback
         def _started(_event: Event | None = None) -> None:
@@ -517,6 +543,8 @@ class SwvScheduleManager:
     def _on_quirk_event(self, event: dict[str, Any]) -> None:
         """Every plan / clock / session event from any SWV valve."""
         key = (event["ieee"], event["endpoint_id"])
+        if event["type"] == "session":
+            self._line_heard[key] = time.monotonic()
         waiter = self._waiters.get(key)
         if waiter is not None:
             matcher, future = waiter
@@ -606,6 +634,56 @@ class SwvScheduleManager:
                 else "valve has a plan HA does not know"
             ),
             reported=reported,
+        )
+
+    # ── lost "closed" reports ──
+    @callback
+    def _check_stale_lines(self, _now: datetime | None = None) -> None:
+        """Read back every line HA shows open that the valve has gone quiet on."""
+        now = time.monotonic()
+        for line in find_swv_switches(self.hass):
+            state = self.hass.states.get(line["switch"])
+            if state is None or state.state != "on":
+                continue
+            open_s = (dt_util.utcnow() - state.last_changed).total_seconds()
+            if open_s < STALE_LINE_SILENCE_S:
+                continue
+            try:
+                key = (self._ieee(line["device_id"]), int(line["channel"]))
+            except HomeAssistantError:
+                continue
+            silent_s = now - self._line_heard.get(key, now - open_s)
+            if silent_s < STALE_LINE_SILENCE_S:
+                continue
+            last_read = self._line_read.get(key, float("-inf"))
+            if now - last_read < STALE_LINE_READ_INTERVAL_S:
+                continue
+            self._line_read[key] = now
+            self.hass.async_create_task(
+                self._read_line_state(
+                    line["device_id"], line["switch"], key[1], silent_s
+                )
+            )
+
+    async def _read_line_state(
+        self, device_id: str, switch: str, endpoint_id: int, silent_s: float
+    ) -> None:
+        """Ask the valve whether a line is open; ZHA updates the switch."""
+        try:
+            on_off = self._cluster(device_id, endpoint_id).endpoint.on_off
+            async with asyncio.timeout(ACK_TIMEOUT_S):
+                success, _failure = await on_off.read_attributes(
+                    ["on_off"], allow_cache=False
+                )
+        except Exception as err:  # noqa: BLE001 - the next check retries
+            _LOGGER.debug("Read-back of %s failed: %s", switch, err)
+            return
+        _LOGGER.info(
+            "%s shows open but the valve sent nothing for %.0f s; "
+            "read back on_off = %s",
+            switch,
+            silent_s,
+            success.get("on_off"),
         )
 
     # ── program ──

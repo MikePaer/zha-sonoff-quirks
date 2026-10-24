@@ -196,6 +196,12 @@ its plans, so HA cannot read them back: each slot carries a status instead —
 settings) or *failed* (rejected, unanswered, or changed elsewhere — e.g. in
 the eWeLink app; resync fixes it).
 
+**Lost "closed" reports.** The valve closes a line on its own timer, but the
+report that tells HA can get lost, leaving the switch on in HA. While a line
+runs the valve reports every ~6 s, so a line HA shows open that has been silent
+for 30 s is read back from the valve (at most once a minute) and the switch
+follows the answer. The read never opens or closes anything.
+
 **A program** runs zones back to back from one start time — the usual
 "lawn, then boxes, then the backyard" morning. Each setting can be a literal or
 a helper entity, and from then on the integration watches those helpers and

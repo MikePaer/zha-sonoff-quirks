@@ -71,6 +71,24 @@ class FakeEndpoint:
     async def set_rain_delay(self, end) -> None:
         self.valve.sent.append(("rain_delay", self.endpoint_id, end))
 
+    # The quirk cluster's zigpy endpoint, and that endpoint's OnOff cluster:
+    # one object stands in for all three.
+    @property
+    def endpoint(self) -> FakeEndpoint:
+        return self
+
+    @property
+    def on_off(self) -> FakeEndpoint:
+        return self
+
+    async def read_attributes(self, attributes, allow_cache=False):
+        """OnOff read-back; like ZHA, the answer updates the line's switch."""
+        self.valve.sent.append(("read", self.endpoint_id, tuple(attributes)))
+        is_on = self.valve.line_on.get(self.endpoint_id, False)
+        switch = self.valve.switches[str(self.endpoint_id)]
+        self.valve.hass.states.async_set(switch, "on" if is_on else "off")
+        return {"on_off": is_on}, {}
+
 
 @dataclass
 class FakeValve:
@@ -87,6 +105,9 @@ class FakeValve:
     remove_status: int | None = 0
     manual: dict[str, str] = field(default_factory=dict)
     sent: list[tuple[str, int, Any]] = field(default_factory=list)
+    #: What an OnOff read-back answers per endpoint (default: closed).
+    line_on: dict[int, bool] = field(default_factory=dict)
+    hass: Any = None
 
     def endpoint(self, endpoint_id: int) -> FakeEndpoint:
         return FakeEndpoint(self, endpoint_id)
@@ -137,7 +158,9 @@ def _add_valve(
         )
         hass.states.async_set(reg.entity_id, state)
         manual[suffix] = reg.entity_id
-    return FakeValve(ieee=ieee, device_id=device.id, switches=switches, manual=manual)
+    return FakeValve(
+        ieee=ieee, device_id=device.id, switches=switches, manual=manual, hass=hass
+    )
 
 
 @pytest.fixture

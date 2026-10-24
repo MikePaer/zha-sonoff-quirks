@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+import time
 
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
@@ -583,3 +584,83 @@ async def test_valve_next_session_is_shown(hass, manager, valves):
     nxt = sensor.extra_state_attributes["valve_next_session"]
     assert nxt["plan_index"] == 5
     assert nxt["start"].startswith(dt_util.now().date().isoformat() + "T17:35:00")
+
+
+# ── lost "closed" reports (2026-10-24) ──
+
+
+def _open_since(hass, switch, seconds_ago):
+    hass.states.async_set(switch, "on", timestamp=time.time() - seconds_ago)
+
+
+def _session_frame(valve, endpoint_id):
+    valve.emit(
+        endpoint_id,
+        "session",
+        session_state=2,
+        session_plan_index=0,
+        session_scheduled=False,
+    )
+
+
+def _reads(valve):
+    return [entry for entry in valve.sent if entry[0] == "read"]
+
+
+async def test_silent_open_line_is_read_back(hass, manager, valves):
+    """The valve closed but its report was lost: the read-back closes HA's switch."""
+    front = valves["front"]
+    _open_since(hass, front.switches["1"], 45)
+
+    manager._check_stale_lines()
+    await hass.async_block_till_done()
+
+    assert _reads(front) == [("read", 1, ("on_off",))]
+    assert hass.states.get(front.switches["1"]).state == "off"
+
+
+async def test_reporting_line_is_not_read(hass, manager, valves):
+    front = valves["front"]
+    _open_since(hass, front.switches["1"], 45)
+    _session_frame(front, 1)
+
+    manager._check_stale_lines()
+    await hass.async_block_till_done()
+
+    assert _reads(front) == []
+
+
+async def test_other_line_reports_do_not_hide_a_silent_line(hass, manager, valves):
+    """2026-10-24: front boxes reporting while the lawn's close report was lost."""
+    front = valves["front"]
+    _open_since(hass, front.switches["1"], 45)
+    _session_frame(front, 2)
+
+    manager._check_stale_lines()
+    await hass.async_block_till_done()
+
+    assert _reads(front) == [("read", 1, ("on_off",))]
+
+
+async def test_just_opened_line_is_not_read(hass, manager, valves):
+    front = valves["front"]
+    _open_since(hass, front.switches["1"], 5)
+
+    manager._check_stale_lines()
+    await hass.async_block_till_done()
+
+    assert _reads(front) == []
+
+
+async def test_line_still_open_is_read_at_most_once_a_minute(hass, manager, valves):
+    front = valves["front"]
+    front.line_on[1] = True
+    _open_since(hass, front.switches["1"], 45)
+
+    manager._check_stale_lines()
+    await hass.async_block_till_done()
+    manager._check_stale_lines()
+    await hass.async_block_till_done()
+
+    assert _reads(front) == [("read", 1, ("on_off",))]
+    assert hass.states.get(front.switches["1"]).state == "on"
