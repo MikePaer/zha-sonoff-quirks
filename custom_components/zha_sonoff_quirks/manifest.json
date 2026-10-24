@@ -1,7 +1,7 @@
 {
   "domain": "zha_sonoff_quirks",
   "name": "Sonoff ZHA",
-  "version": "0.12.1",
+  "version": "0.12.2",
   "documentation": "https://github.com/SimoneAvogadro/zha-sonoff-quirks",
   "issue_tracker": "https://github.com/SimoneAvogadro/zha-sonoff-quirks/issues",
   "dependencies": ["zha", "frontend", "http", "lovelace"],
